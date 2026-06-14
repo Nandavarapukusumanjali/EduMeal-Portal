@@ -1,0 +1,126 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "Information about registered portal users and their access roles",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "Unique identifier for authentication" },
+        "email": { "type": "string", "description": "User email address" },
+        "name": { "type": "string", "description": "Display name" },
+        "role": { "type": "string", "enum": ["student", "teacher", "supervisor", "admin"], "description": "Role-based access level" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "role"]
+    },
+    "Student": {
+      "title": "Student",
+      "description": "Student roster record managed by teachers",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique student identifier" },
+        "name": { "type": "string", "description": "Student full name" },
+        "rollNo": { "type": "string", "description": "Student roll number" },
+        "class": { "type": "string", "description": "School class level" },
+        "section": { "type": "string", "description": "Class section assignment" },
+        "gender": { "type": "string", "enum": ["Male", "Female"] },
+        "present": { "type": "boolean", "description": "Today's dynamic attendance mark" }
+      },
+      "required": ["id", "name", "class", "section", "gender", "present"]
+    },
+    "Attendance": {
+      "title": "Attendance",
+      "description": "Attendance logs recorded by teachers per day and class",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "date": { "type": "string" },
+        "classStr": { "type": "string" },
+        "section": { "type": "string" },
+        "totalStudents": { "type": "integer" },
+        "totalPresent": { "type": "integer" },
+        "totalAbsent": { "type": "integer" },
+        "attendancePercentage": { "type": "number" }
+      },
+      "required": ["id", "date", "classStr", "section", "totalStudents", "totalPresent", "totalAbsent", "attendancePercentage"]
+    },
+    "Feedback": {
+      "title": "Feedback",
+      "description": "Mid-day meal quality ratings and comments submitted by student diners",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "date": { "type": "string" },
+        "studentName": { "type": "string" },
+        "itemRatings": { "type": "object", "description": "Map of food item names to integer ratings (1-5)" },
+        "serviceRatings": {
+          "type": "object",
+          "properties": {
+            "taste": { "type": "integer" },
+            "quality": { "type": "integer" },
+            "temperature": { "type": "integer" },
+            "behaviour": { "type": "integer" },
+            "cleanliness": { "type": "integer" }
+          }
+        },
+        "comments": { "type": "string" }
+      },
+      "required": ["id", "date", "itemRatings", "serviceRatings"]
+    },
+    "Wastage": {
+      "title": "Wastage",
+      "description": "Daily food preparation leftovers and wastage audited by supervisor",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "date": { "type": "string" },
+        "items": { "type": "array" },
+        "avgWastePercentage": { "type": "number" },
+        "mostWastedItem": { "type": "string" },
+        "mostWastedQty": { "type": "number" }
+      },
+      "required": ["id", "date", "items", "avgWastePercentage", "mostWastedItem", "mostWastedQty"]
+    },
+    "Menu": {
+      "title": "Menu",
+      "description": "Mid-day meal master schedules including nutrition and tagging",
+      "type": "object",
+      "properties": {
+        "day": { "type": "string" },
+        "items": { "type": "array" },
+        "calories": { "type": "string" },
+        "protein: ": { "type": "string" },
+        "fiber": { "type": "string" },
+        "veggieTag": { "type": "string" },
+        "image": { "type": "string" }
+      },
+      "required": ["day", "items"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "Users credentials and authority profile definitions"
+    },
+    "/students/{studentId}": {
+      "schema": "Student",
+      "description": "Student roster registrations"
+    },
+    "/attendance/{attendanceId}": {
+      "schema": "Attendance",
+      "description": "Daily attendance logs compiled per class"
+    },
+    "/feedback/{feedbackId}": {
+      "schema": "Feedback",
+      "description": "Student ratings and reviews submissions"
+    },
+    "/wastage/{wastageId}": {
+      "schema": "Wastage",
+      "description": "Supervisor leftovers and cooking weights logs"
+    },
+    "/menu/{menuId}": {
+      "schema": "Menu",
+      "description": "Master dishes dynamic weekly menu"
+    }
+  }
+}

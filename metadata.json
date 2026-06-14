@@ -1,0 +1,6 @@
+{
+  "name": "EduMeal Portal",
+  "description": "Smart Mid-Day Meal Feedback & Waste Reduction System for attendance, meal planning, and student feedback.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

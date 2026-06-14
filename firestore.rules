@@ -1,0 +1,91 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global Catch-all safety net (Default Deny)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Hardened helper primitives
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\- ]+$');
+    }
+
+    // Retrieve user authority info
+    function getUserRole() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
+    }
+
+    function hasUserRecord() {
+      return exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function hasRole(roleName) {
+      return isSignedIn() && hasUserRecord() && getUserRole() == roleName;
+    }
+
+    function isAdmin() {
+      return hasRole('admin');
+    }
+
+    function isTeacher() {
+      return hasRole('teacher');
+    }
+
+    function isSupervisor() {
+      return hasRole('supervisor');
+    }
+
+    function isStudent() {
+      return hasRole('student');
+    }
+
+    // Rules matching individual collections
+    match /users/{userId} {
+      allow read: if isSignedIn() && (request.auth.uid == userId || isAdmin());
+      allow create: if isSignedIn() && request.auth.uid == userId 
+        && request.resource.data.uid == userId
+        && request.resource.data.role in ['student', 'teacher', 'supervisor', 'admin'];
+      allow update: if isSignedIn() && request.auth.uid == userId
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role', 'uid']);
+      allow delete: if isSignedIn() && isAdmin();
+    }
+
+    match /students/{studentId} {
+      allow read, list: if isSignedIn();
+      allow create: if isSignedIn() && (isTeacher() || isAdmin()) && isValidId(studentId);
+      allow update: if isSignedIn() && (isTeacher() || isAdmin()) && isValidId(studentId);
+      allow delete: if isSignedIn() && (isTeacher() || isAdmin());
+    }
+
+    match /attendance/{attendanceId} {
+      allow read, list: if isSignedIn();
+      allow create: if isSignedIn() && (isTeacher() || isAdmin()) && isValidId(attendanceId);
+      allow update: if isSignedIn() && (isTeacher() || isAdmin()) && isValidId(attendanceId);
+      allow delete: if isSignedIn() && (isTeacher() || isAdmin());
+    }
+
+    match /feedback/{feedbackId} {
+      allow read, list: if isSignedIn();
+      allow create: if isSignedIn() && isValidId(feedbackId);
+      allow update, delete: if isSignedIn() && isAdmin();
+    }
+
+    match /wastage/{wastageId} {
+      allow read, list: if isSignedIn();
+      allow create: if isSignedIn() && (isSupervisor() || isAdmin()) && isValidId(wastageId);
+      allow update: if isSignedIn() && (isSupervisor() || isAdmin()) && isValidId(wastageId);
+      allow delete: if isSignedIn() && (isSupervisor() || isAdmin());
+    }
+
+    match /menu/{menuId} {
+      allow read, list: if isSignedIn();
+      allow create, update, delete: if isSignedIn() && (isSupervisor() || isAdmin());
+    }
+  }
+}
