@@ -40,7 +40,14 @@ export default function App() {
   // Load baseline statistics and synchronize in real-time from Firestore database collections
   const [students, setStudents] = useState<Student[]>([]);
   const [wastageReports, setWastageReports] = useState<DailyWastageReport[]>([]);
-  const [attendanceReports, setAttendanceReports] = useState<AttendanceReport[]>([]);
+  const [attendanceReports, setAttendanceReports] = useState<AttendanceReport[]>(() => {
+    try {
+      const saved = localStorage.getItem('edumeal_local_attendance_reports');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
   const [feedbackList, setFeedbackList] = useState<StudentFeedback[]>([]);
   const [notificationCount, setNotificationCount] = useState<number>(3);
 
@@ -77,7 +84,30 @@ export default function App() {
     });
 
     const unsubAttendance = subscribeToAttendance((list) => {
-      setAttendanceReports(list);
+      setAttendanceReports(prev => {
+        const mergedMap = new Map<string, AttendanceReport>();
+        
+        // 1. Initial State from localStorage
+        try {
+          const savedStr = localStorage.getItem('edumeal_local_attendance_reports');
+          if (savedStr) {
+            const savedArr = JSON.parse(savedStr) as AttendanceReport[];
+            savedArr.forEach(r => {
+              if (r && r.id) mergedMap.set(r.id, r);
+            });
+          }
+        } catch (e) {
+          console.error(e);
+        }
+
+        // 2. Overwrite with database reports
+        list.forEach(r => {
+          if (r && r.id) mergedMap.set(r.id, r);
+        });
+
+        const mergedList = Array.from(mergedMap.values());
+        return mergedList.sort((a, b) => b.date.localeCompare(a.date));
+      });
     });
 
     return () => {
@@ -109,7 +139,7 @@ export default function App() {
   };
 
   // Handle attendance submission from TeacherPortal
-  const handleSubmitAttendance = async (classStr: string, section: string, presentCount: number) => {
+  const handleSubmitAttendance = async (classStr: string, section: string, presentCount: number, customDate?: string) => {
     try {
       setNotificationCount(p => p + 1);
       
@@ -120,7 +150,8 @@ export default function App() {
         const da = String(d.getDate()).padStart(2, '0');
         return `${yr}-${mo}-${da}`;
       };
-      const stableToday = getLocalTodayDate();
+      
+      const targetDate = customDate || getLocalTodayDate();
 
       const classStudents = students.filter(s => s.class === classStr && s.section === section);
       const total = classStudents.length;
@@ -129,8 +160,8 @@ export default function App() {
       const percentage = total > 0 ? Math.round((present / total) * 100) : 0;
 
       const report: AttendanceReport = {
-        id: `${classStr}_${section}_${stableToday}`,
-        date: stableToday,
+        id: `${classStr}_${section}_${targetDate}`,
+        date: targetDate,
         classStr,
         section,
         totalStudents: total,
@@ -139,6 +170,19 @@ export default function App() {
         attendancePercentage: percentage
       };
 
+      // 1. Save locally in state & localStorage immediately so the UI is 100% responsive
+      setAttendanceReports(prev => {
+        const filtered = prev.filter(r => r.id !== report.id);
+        const updated = [report, ...filtered];
+        try {
+          localStorage.setItem('edumeal_local_attendance_reports', JSON.stringify(updated));
+        } catch (e) {
+          console.error('Failed to save to local storage', e);
+        }
+        return updated;
+      });
+
+      // 2. Transmit to remote database (fails gracefully if sandbox environment is unauthenticated/restricted)
       await saveAttendanceReport(report);
     } catch (err) {
       console.error('Failed to save attendance report to Firestore:', err);

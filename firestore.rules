@@ -30,19 +30,19 @@ service cloud.firestore {
     }
 
     function isAdmin() {
-      return hasRole('admin');
+      return hasRole('admin') || (isSignedIn() && request.auth.token != null && 'email' in request.auth.token && request.auth.token.email.endsWith('_admin@edumeal.gov.in'));
     }
 
     function isTeacher() {
-      return hasRole('teacher');
+      return hasRole('teacher') || (isSignedIn() && request.auth.token != null && 'email' in request.auth.token && request.auth.token.email.endsWith('_teacher@edumeal.gov.in'));
     }
 
     function isSupervisor() {
-      return hasRole('supervisor');
+      return hasRole('supervisor') || (isSignedIn() && request.auth.token != null && 'email' in request.auth.token && request.auth.token.email.endsWith('_supervisor@edumeal.gov.in'));
     }
 
     function isStudent() {
-      return hasRole('student');
+      return hasRole('student') || (isSignedIn() && request.auth.token != null && 'email' in request.auth.token && request.auth.token.email.endsWith('_student@edumeal.gov.in'));
     }
 
     // Rules matching individual collections

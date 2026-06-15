@@ -448,5 +448,51 @@ export async function seedDatabaseIfEmpty() {
   } catch (error) {
     console.warn('Silent warning - skipped or missing permission to seed menu:', error);
   }
+
+  // 5. Seed Attendance Reports for June 12 and June 13, 2026 (for school reopening days)
+  try {
+    const classesList = ['Class 6', 'Class 7', 'Class 8', 'Class 9', 'Class 10'];
+    const sectionsList = ['Section A', 'Section B'];
+    const targetDates = ['2026-06-12', '2026-06-13'];
+
+    console.log('Seeding baseline attendance registers for school reopening days...');
+    for (const dt of targetDates) {
+      for (const cls of classesList) {
+        for (const sec of sectionsList) {
+          const reportId = `${cls}_${sec}_${dt}`;
+          const reportDocRef = doc(db, 'attendance', reportId);
+          
+          const docSnap = await getDoc(reportDocRef);
+          if (!docSnap.exists()) {
+            let hash = 0;
+            const seedStr = `${cls}_${sec}_${dt}`;
+            for (let i = 0; i < seedStr.length; i++) {
+              hash = seedStr.charCodeAt(i) + ((hash << 5) - hash);
+            }
+            const absentsCount = (Math.abs(hash) % 3) + 1; // 1 to 3 absentees
+            const total = 30; // 30 students per class-section
+            const present = total - absentsCount;
+            const percentage = Math.round((present / total) * 100);
+
+            const seedReport: AttendanceReport = {
+              id: reportId,
+              date: dt,
+              classStr: cls,
+              section: sec,
+              totalStudents: total,
+              totalPresent: present,
+              totalAbsent: absentsCount,
+              attendancePercentage: percentage
+            };
+            
+            await setDoc(reportDocRef, seedReport);
+          }
+        }
+      }
+    }
+    console.log('Seeding attendance registers completed.');
+  } catch (error) {
+    console.warn('Silent warning - skipped or missing permission to seed attendance reports:', error);
+  }
 }
 

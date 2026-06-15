@@ -2,14 +2,15 @@ import React, { useState } from 'react';
 import { Student, AttendanceReport } from '../types';
 import { 
   Users, CheckCircle, XCircle, Percent, Plus, Edit, Trash, 
-  ArrowLeft, Save, Sparkles, Calendar, Printer, Download, RefreshCw, Check
+  ArrowLeft, Save, Sparkles, Calendar, Printer, Download, RefreshCw, Check,
+  AlertTriangle, HelpCircle
 } from 'lucide-react';
 import { addStudent, updateStudent, deleteStudent } from '../services/db';
 
 interface TeacherPortalProps {
   students: Student[];
   onUpdateStudents: (updatedStudents: Student[]) => void;
-  onSubmitAttendance: (classStr: string, section: string, presentCount: number) => void;
+  onSubmitAttendance: (classStr: string, section: string, presentCount: number, customDate?: string) => void;
   onBackToWelcome: () => void;
   attendanceReports?: AttendanceReport[];
 }
@@ -53,7 +54,14 @@ export default function TeacherPortal({
   });
 
   // Local submitted status to update instantly without waiting for Firestore live collection cycle
-  const [localSubmittedClassSectionDates, setLocalSubmittedClassSectionDates] = useState<{ [key: string]: boolean }>({});
+  const [localSubmittedClassSectionDates, setLocalSubmittedClassSectionDates] = useState<{ [key: string]: boolean }>(() => {
+    try {
+      const saved = localStorage.getItem('edumeal_submitted_dates');
+      return saved ? JSON.parse(saved) : {};
+    } catch {
+      return {};
+    }
+  });
 
   const getLocalTodayDate = () => {
     const d = new Date();
@@ -64,96 +72,179 @@ export default function TeacherPortal({
   };
 
   const todayDate = getLocalTodayDate();
+  const [attendanceDate, setAttendanceDate] = useState<string>(todayDate);
 
-  // Today click interaction status: e.g., { [studentId]: 'NOT_MARKED' | 'P' | 'A' }
-  const [todayClickStatus, setTodayClickStatus] = useState<{ [key: string]: 'NOT_MARKED' | 'P' | 'A' }>(() => {
-    try {
-      const d = new Date();
-      const yr = d.getFullYear();
-      const mo = String(d.getMonth() + 1).padStart(2, '0');
-      const da = String(d.getDate()).padStart(2, '0');
-      const tDate = `${yr}-${mo}-${da}`;
-      const saved = localStorage.getItem(`edumeal_click_status_${tDate}`);
-      return saved ? JSON.parse(saved) : {};
-    } catch {
-      return {};
-    }
+  // Non-blocking accessible custom dialog states to bypass sandboxed iframe restrictions on sync popup dialogs
+  const [dialogInput, setDialogInput] = useState<string>('');
+  const [dialogState, setDialogState] = useState<{
+    isOpen: boolean;
+    type: 'alert' | 'confirm' | 'prompt';
+    title: string;
+    message: string;
+    onConfirm: (val?: string) => void;
+    onCancel?: () => void;
+  }>({
+    isOpen: false,
+    type: 'alert',
+    title: '',
+    message: '',
+    onConfirm: () => {},
   });
 
-  const clickTimers = React.useRef<{ [key: string]: any }>({});
+  const showCustomAlert = (title: string, message: string, onOk?: () => void) => {
+    setDialogState({
+      isOpen: true,
+      type: 'alert',
+      title,
+      message,
+      onConfirm: () => {
+        setDialogState(prev => ({ ...prev, isOpen: false }));
+        if (onOk) onOk();
+      }
+    });
+  };
+
+  const showCustomConfirm = (title: string, message: string, onYes: () => void, onNo?: () => void) => {
+    setDialogState({
+      isOpen: true,
+      type: 'confirm',
+      title,
+      message,
+      onConfirm: () => {
+        setDialogState(prev => ({ ...prev, isOpen: false }));
+        onYes();
+      },
+      onCancel: () => {
+        setDialogState(prev => ({ ...prev, isOpen: false }));
+        if (onNo) onNo();
+      }
+    });
+  };
+
+  const showCustomPrompt = (title: string, message: string, defaultValue: string, onYes: (val: string) => void, onNo?: () => void) => {
+    setDialogInput(defaultValue);
+    setDialogState({
+      isOpen: true,
+      type: 'prompt',
+      title,
+      message,
+      onConfirm: (typedValue?: string) => {
+        setDialogState(prev => ({ ...prev, isOpen: false }));
+        onYes(typedValue || '');
+      },
+      onCancel: () => {
+        setDialogState(prev => ({ ...prev, isOpen: false }));
+        if (onNo) onNo();
+      }
+    });
+  };
+
+  // Today click interaction status: e.g., { [studentId]: 'NOT_MARKED' | 'P' | 'A' }
+  const [todayClickStatus, setTodayClickStatus] = useState<{ [key: string]: 'NOT_MARKED' | 'P' | 'A' }>({});
+
+  React.useEffect(() => {
+    try {
+      const saved = localStorage.getItem(`edumeal_click_status_${attendanceDate}`);
+      setTodayClickStatus(saved ? JSON.parse(saved) : {});
+    } catch {
+      setTodayClickStatus({});
+    }
+  }, [attendanceDate]);
 
   const handleStatusClick = (studentId: string) => {
-    if (clickTimers.current[studentId]) {
-      // Double click / tap detected!
-      clearTimeout(clickTimers.current[studentId]);
-      delete clickTimers.current[studentId];
-      // Set status to 'A' (Absent, Red)
-      setTodayClickStatus(prev => {
-        const updated = { ...prev, [studentId]: 'A' as const };
-        localStorage.setItem(`edumeal_click_status_${todayDate}`, JSON.stringify(updated));
-        return updated;
-      });
-      // change physical database student model
-      onUpdateStudents(students.map(s => s.id === studentId ? { ...s, present: false } : s));
-      updateStudent(studentId, { present: false });
+    const current = todayClickStatus[studentId];
+    // Start as unmarked (undefined). First click -> Present (P). Toggle then flips: P -> A -> P.
+    let nextStatus: 'P' | 'A';
+    if (!current || current === 'NOT_MARKED') {
+      nextStatus = 'P';
     } else {
-      // Single click / tap set timer
-      clickTimers.current[studentId] = setTimeout(() => {
-        delete clickTimers.current[studentId];
-        // Set status to 'P' (Present, Green)
-        setTodayClickStatus(prev => {
-          const updated = { ...prev, [studentId]: 'P' as const };
-          localStorage.setItem(`edumeal_click_status_${todayDate}`, JSON.stringify(updated));
-          return updated;
-        });
-        // change physical database student model
-        onUpdateStudents(students.map(s => s.id === studentId ? { ...s, present: true } : s));
-        updateStudent(studentId, { present: true });
-      }, 250); // wait 250ms
+      nextStatus = current === 'P' ? 'A' : 'P';
     }
+
+    const updated = { ...todayClickStatus, [studentId]: nextStatus };
+    setTodayClickStatus(updated);
+    try {
+      localStorage.setItem(`edumeal_click_status_${attendanceDate}`, JSON.stringify(updated));
+    } catch (e) {
+      console.error('Failed to save click status to localStorage', e);
+    }
+    
+    const isPresent = nextStatus === 'P';
+    onUpdateStudents(students.map(s => s.id === studentId ? { ...s, present: isPresent } : s));
+    updateStudent(studentId, { present: isPresent });
   };
 
   const handleEditHolidayToday = () => {
-    const isHolidayCo = window.confirm("Is today a holiday?");
-    if (isHolidayCo) {
-      const desc = window.prompt("Enter holiday Description (e.g., 'NEW YEAR'):", holidayOverrides[todayDate] || "NEW YEAR");
-      if (desc && desc.trim()) {
-        const cleanDesc = desc.trim().toUpperCase();
-        const updated = { ...holidayOverrides, [todayDate]: cleanDesc };
+    showCustomConfirm(
+      "Mark Holiday Confirmation",
+      `Is ${attendanceDate} a holiday? Click 'Yes / Proceed' to configure a custom holiday name, or 'No / Cancel' to reset/mark it as a standard working school day.`,
+      () => {
+        showCustomPrompt(
+          "Enter Holiday Description",
+          `Please enter the holiday description (e.g., 'NEW YEAR') for ${attendanceDate}:`,
+          holidayOverrides[attendanceDate] || "NEW YEAR",
+          (descName) => {
+            if (descName && descName.trim()) {
+              const cleanDesc = descName.trim().toUpperCase();
+              const updated = { ...holidayOverrides, [attendanceDate]: cleanDesc };
+              setHolidayOverrides(updated);
+              localStorage.setItem('edumeal_holiday_overrides', JSON.stringify(updated));
+              showCustomAlert(
+                "Holiday Configured Successfully",
+                `${attendanceDate} has been set as a Holiday: "${cleanDesc}". This will spell out letters in the Monthly Attendance Sheet!`
+              );
+            }
+          }
+        );
+      },
+      () => {
+        const updated = { ...holidayOverrides };
+        delete updated[attendanceDate];
         setHolidayOverrides(updated);
         localStorage.setItem('edumeal_holiday_overrides', JSON.stringify(updated));
-        alert(`Today (${todayDate}) is set as a Holiday: "${cleanDesc}". This will spell out letters in the Monthly Attendance Sheet!`);
+        showCustomAlert(
+          "Standard Working Day Restore",
+          `${attendanceDate} is marked as a standard working school day. This will be automatically included in working days!`
+        );
       }
-    } else {
-      // Remove holiday override for today
-      const updated = { ...holidayOverrides };
-      delete updated[todayDate];
-      setHolidayOverrides(updated);
-      localStorage.setItem('edumeal_holiday_overrides', JSON.stringify(updated));
-      alert(`Today (${todayDate}) is marked as a standard working school day. This will be automatically included in working days!`);
-    }
+    );
   };
 
   const handleEditHolidayForDay = (dayNum: number) => {
     const dStr = `${selectedYear}-${pad(selectedMonth + 1)}-${pad(dayNum)}`;
-    const isHolidayCo = window.confirm(`Is Day ${dayNum} (${dStr}) a holiday?`);
-    if (isHolidayCo) {
-      const desc = window.prompt("Enter holiday Description (e.g., 'NEW YEAR'):", holidayOverrides[dStr] || "NEW YEAR");
-      if (desc && desc.trim()) {
-        const cleanDesc = desc.trim().toUpperCase();
-        const updated = { ...holidayOverrides, [dStr]: cleanDesc };
+    showCustomConfirm(
+      "Mark Holiday Confirmation",
+      `Is Day ${dayNum} (${dStr}) a holiday? Click 'Yes / Proceed' to configure it as a custom holiday, or 'No / Cancel' to reset/mark it as a standard school working day.`,
+      () => {
+        showCustomPrompt(
+          "Enter Holiday Description",
+          `Please enter the holiday description for ${dStr}:`,
+          holidayOverrides[dStr] || "NEW YEAR",
+          (descName) => {
+            if (descName && descName.trim()) {
+              const cleanDesc = descName.trim().toUpperCase();
+              const updated = { ...holidayOverrides, [dStr]: cleanDesc };
+              setHolidayOverrides(updated);
+              localStorage.setItem('edumeal_holiday_overrides', JSON.stringify(updated));
+              showCustomAlert(
+                "Holiday Configured Successfully",
+                `Day ${dayNum} (${dStr}) is set as a Holiday: "${cleanDesc}". This will spell out letters in the Monthly Attendance Sheet!`
+              );
+            }
+          }
+        );
+      },
+      () => {
+        const updated = { ...holidayOverrides };
+        delete updated[dStr];
         setHolidayOverrides(updated);
         localStorage.setItem('edumeal_holiday_overrides', JSON.stringify(updated));
-        alert(`Day ${dayNum} (${dStr}) is set as a Holiday: "${cleanDesc}". This will spell out letters in the Monthly Attendance Sheet!`);
+        showCustomAlert(
+          "Standard Working Day Restore",
+          `Day ${dayNum} (${dStr}) is marked as a standard school working day. This will be automatically included in working days!`
+        );
       }
-    } else {
-      // Remove holiday override
-      const updated = { ...holidayOverrides };
-      delete updated[dStr];
-      setHolidayOverrides(updated);
-      localStorage.setItem('edumeal_holiday_overrides', JSON.stringify(updated));
-      alert(`Day ${dayNum} (${dStr}) is marked as a standard school working day. This will be automatically included in working days!`);
-    }
+    );
   };
 
   const pad = (num: number) => num.toString().padStart(2, '0');
@@ -177,42 +268,69 @@ export default function TeacherPortal({
          s.name.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-  // Stats calculation matches interactive tap states
+  const getIsRealDateSundayOrHoliday = (dStr: string) => {
+    const parts = dStr.split('-');
+    const yr = parseInt(parts[0], 10);
+    const mo = parseInt(parts[1], 10) - 1; // 0-indexed
+    const da = parseInt(parts[2], 10);
+    const d = new Date(yr, mo, da);
+    const isSunday = d.getDay() === 0;
+    
+    if (holidayOverrides[dStr]) {
+      return { isHoliday: true, name: holidayOverrides[dStr], isSunday };
+    }
+    if (yr === 2026 && mo === 5) {
+      if (da === 5) return { isHoliday: true, name: "BAKRID", isSunday };
+      if (da < 12) return { isHoliday: true, name: "SUMMER HOLIDAYS", isSunday };
+    }
+    return { isHoliday: false, name: null, isSunday };
+  };
+
+  // Stats calculation matches interactive tap states (unmarked is NOT counted as Present or Absent)
   const totalStudents = filteredStudents.length;
-  const presentStudents = filteredStudents.filter(s => {
-    const status = todayClickStatus[s.id];
-    if (status === 'A') return false;
-    // Unmarked & P are considered PRESENT by default before submission (Opted for meal starts at All Present)
-    return true; 
-  }).length;
-  const absentStudents = totalStudents - presentStudents;
+  const presentStudents = filteredStudents.filter(s => todayClickStatus[s.id] === 'P').length;
+  const absentStudents = filteredStudents.filter(s => todayClickStatus[s.id] === 'A').length;
   const attendancePercentage = totalStudents > 0 ? ((presentStudents / totalStudents) * 100).toFixed(1) : '0.0';
 
-  // Yesterday vs Today logic based on submitted reports
+  // Yesterday vs Attendance Date logic based on submitted reports
   const todayReport = attendanceReports.find(
-    r => r.classStr === selectedClass && r.section === selectedSection && r.date === todayDate
+    r => r.classStr === selectedClass && r.section === selectedSection && r.date === attendanceDate
   );
 
   const sortedPreviousReports = [...attendanceReports]
-    .filter(r => r.classStr === selectedClass && r.section === selectedSection && r.date !== todayDate)
+    .filter(r => r.classStr === selectedClass && r.section === selectedSection && r.date !== attendanceDate)
     .sort((a, b) => b.date.localeCompare(a.date));
   
   const yesterdayReport = sortedPreviousReports[0];
-  const todaySubmitted = !!todayReport || !!localSubmittedClassSectionDates[`${selectedClass}_${selectedSection}_${todayDate}`];
+  const todaySubmitted = !!todayReport || !!localSubmittedClassSectionDates[`${selectedClass}_${selectedSection}_${attendanceDate}`];
+
+  const realTodayInfo = getIsRealDateSundayOrHoliday(attendanceDate);
+  const isClosedToday = realTodayInfo.isSunday || realTodayInfo.isHoliday;
 
   let statsTotal = totalStudents;
   let statsPresent = presentStudents;
   let statsAbsent = absentStudents;
   let statsPercentage = attendancePercentage;
-  let statsLabel = "Today's Attendance (PENDING - NOT POSTED)";
+  let statsLabel = "Selected Date's Attendance (PENDING - NOT POSTED)";
   let statsColor = "border-red-500 bg-red-50/40 text-red-950";
 
-  if (todaySubmitted) {
+  if (isClosedToday) {
+    statsTotal = totalStudents;
+    statsPresent = 0;
+    statsAbsent = 0;
+    statsPercentage = "0.0";
+    if (realTodayInfo.isSunday) {
+      statsLabel = `Sunday (${attendanceDate}) - School Closed (No Attendance Required)`;
+    } else {
+      statsLabel = `Holiday (${attendanceDate}): ${realTodayInfo.name} - School Closed (No Attendance Required)`;
+    }
+    statsColor = "border-outline bg-surface-container-low/50 text-on-surface-variant";
+  } else if (todaySubmitted) {
     statsTotal = todayReport ? todayReport.totalStudents : totalStudents;
     statsPresent = todayReport ? todayReport.totalPresent : presentStudents;
     statsAbsent = todayReport ? todayReport.totalAbsent : absentStudents;
     statsPercentage = todayReport ? todayReport.attendancePercentage.toFixed(1) : attendancePercentage;
-    statsLabel = "Today's Attendance (Submitted Successfully)";
+    statsLabel = `Attendance for ${attendanceDate} (Submitted Successfully)`;
     statsColor = "border-secondary bg-secondary/5 text-secondary-hover";
   }
 
@@ -237,7 +355,7 @@ export default function TeacherPortal({
         targets.forEach(s => {
           updated[s.id] = present ? 'P' : 'A';
         });
-        localStorage.setItem(`edumeal_click_status_${todayDate}`, JSON.stringify(updated));
+        localStorage.setItem(`edumeal_click_status_${attendanceDate}`, JSON.stringify(updated));
         return updated;
       });
       // Immediately notify parent components
@@ -300,61 +418,117 @@ export default function TeacherPortal({
   };
 
   const handleSubmit = async () => {
+    const realDateInfo = getIsRealDateSundayOrHoliday(attendanceDate);
+    const isClosed = realDateInfo.isSunday || realDateInfo.isHoliday;
+    if (isClosed) {
+      showCustomAlert(
+        "School Closed",
+        `The date ${attendanceDate} is a school closed day (Sunday or Holiday). No attendance submission is required.`
+      );
+      return;
+    }
+
     // Collect active classroom students
     const classStudents = students.filter(s => s.class === selectedClass && s.section === selectedSection);
+    if (classStudents.length === 0) {
+      showCustomAlert(
+        "No Registered Students",
+        "No students are registered in this class/section."
+      );
+      return;
+    }
     
-    // Any student who is explicitly marked 'A' is an absentee (unmarked starts as Present/Opted for meal)
-    const absentees = classStudents.filter(s => {
+    // Check for unmarked students
+    const unmarkedStudents = classStudents.filter(s => {
       const status = todayClickStatus[s.id];
-      return status === 'A';
+      return !status || status === 'NOT_MARKED';
     });
 
-    const presentCount = classStudents.length - absentees.length;
+    const finalClickStatus = { ...todayClickStatus };
 
-    const absenteeRolls = absentees.length > 0
-      ? absentees.map(s => s.rollNo ? `Roll No. ${s.rollNo} (${s.name})` : s.name).join('\n')
-      : 'None (100% Attendance)';
+    const proceedWithPosting = (workingClickStatus: typeof todayClickStatus) => {
+      const absentees = classStudents.filter(s => workingClickStatus[s.id] === 'A');
+      const presentCount = classStudents.length - absentees.length;
 
-    const msg = `Are you sure you want to submit today's attendance for ${selectedClass} - ${selectedSection}?\n\nAbsentees (Roll Numbers / Name):\n${absentees.length > 0 ? absenteeRolls : 'None (100% Attendance)'}\n\nClick 'OK' to post and update records, or 'Cancel' to hold as not posted.`;
-    
-    const confirmPost = window.confirm(msg);
-    if (confirmPost) {
-      try {
-        // Post the attendance
-        onSubmitAttendance(selectedClass, selectedSection, presentCount);
+      const absenteeRolls = absentees.length > 0
+        ? absentees.map(s => s.rollNo ? `Roll No. ${s.rollNo} (${s.name})` : s.name).join('\n')
+        : 'None (100% Attendance)';
 
-        // Update today's status: anyone marked 'P' or unmarked remains 'P', 'A' remains 'A'
-        const updatedClickStatus = { ...todayClickStatus };
-        
-        // Immediately start updates for local and DB state
-        const updatedStudentsList = students.map(s => {
-          if (s.class === selectedClass && s.section === selectedSection) {
-            const currentStatus = todayClickStatus[s.id];
-            const isPresent = currentStatus !== 'A'; // Unmarked or 'P' means Present
+      const confirmMsg = `Are you sure you want to submit attendance for ${selectedClass} - ${selectedSection} on date ${attendanceDate}?\n\nAbsentees (Roll Numbers / Name):\n${absentees.length > 0 ? absenteeRolls : 'None (100% Attendance)'}\n\nClick 'Yes / Proceed' to post and update records, or 'No / Cancel' to hold as not posted.`;
 
-            updatedClickStatus[s.id] = isPresent ? 'P' : 'A';
-            
-            // update student Firestore object
-            updateStudent(s.id, { present: isPresent });
-            return { ...s, present: isPresent };
+      showCustomConfirm(
+        "Confirm Attendance Submission",
+        confirmMsg,
+        async () => {
+          try {
+            // Post the attendance (pass the attendanceDate as the 4th argument)
+            onSubmitAttendance(selectedClass, selectedSection, presentCount, attendanceDate);
+
+            // Immediately start updates for local and DB state
+            const updatedStudentsList = students.map(s => {
+              if (s.class === selectedClass && s.section === selectedSection) {
+                const isPresent = workingClickStatus[s.id] !== 'A';
+                updateStudent(s.id, { present: isPresent });
+                return { ...s, present: isPresent };
+              }
+              return s;
+            });
+
+            setTodayClickStatus(workingClickStatus);
+            localStorage.setItem(`edumeal_click_status_${attendanceDate}`, JSON.stringify(workingClickStatus));
+            onUpdateStudents(updatedStudentsList);
+
+            // Mark the date as submitted locally to instantly update the monthly sheet and other components
+            const submissionKey = `${selectedClass}_${selectedSection}_${attendanceDate}`;
+            setLocalSubmittedClassSectionDates(prev => {
+              const updated = { ...prev, [submissionKey]: true };
+              try {
+                localStorage.setItem('edumeal_submitted_dates', JSON.stringify(updated));
+              } catch (err) {
+                console.error(err);
+              }
+              return updated;
+            });
+
+            showCustomAlert(
+              "Attendance Posted Successfully",
+              `Attendance for ${selectedClass} - ${selectedSection} on date ${attendanceDate} posted successfully!\n\nRegistered: ${classStudents.length} students.\nPresent: ${presentCount}.\nAbsentees: ${absentees.length}.`
+            );
+          } catch (err) {
+            console.error('Failed to submit attendance roll:', err);
+            showCustomAlert("Submission Failed", "An error occurred while posting attendance. Please try again.");
           }
-          return s;
-        });
+        },
+        () => {
+          showCustomAlert(
+            "Submission Cancelled",
+            `Attendance for ${attendanceDate} remains NOT POSTED (Pending status retained).`
+          );
+        }
+      );
+    };
 
-        setTodayClickStatus(updatedClickStatus);
-        localStorage.setItem(`edumeal_click_status_${todayDate}`, JSON.stringify(updatedClickStatus));
-        onUpdateStudents(updatedStudentsList);
-
-        // Mark today as submitted locally to instantly update the monthly sheet and other components
-        const submissionKey = `${selectedClass}_${selectedSection}_${todayDate}`;
-        setLocalSubmittedClassSectionDates(prev => ({ ...prev, [submissionKey]: true }));
-
-        alert(`Attendance for ${selectedClass} - ${selectedSection} posted successfully!\nPresent Count: ${presentCount} students.\nAbsentees: ${absentees.length}.`);
-      } catch (err) {
-        console.error('Failed to submit attendance roll:', err);
-      }
+    if (unmarkedStudents.length > 0) {
+      showCustomConfirm(
+        "Unmarked Students Detected",
+        `There are ${unmarkedStudents.length} student(s) still UNMARKED in the list.\n\nWould you like to automatically mark all unmarked students as PRESENT and proceed with submission?`,
+        () => {
+          // Yes: Populate unmarked as 'P'
+          unmarkedStudents.forEach(s => {
+            finalClickStatus[s.id] = 'P';
+          });
+          proceedWithPosting(finalClickStatus);
+        },
+        () => {
+          // No: Cancel submission and tell teacher to specify
+          showCustomAlert(
+            "Submission On Hold",
+            "Submission cancelled. Please mark each student as either Present or Absent before posting."
+          );
+        }
+      );
     } else {
-      alert(`Submission cancelled. Today's roll remains NOT POSTED.`);
+      proceedWithPosting(finalClickStatus);
     }
   };
 
@@ -384,39 +558,79 @@ export default function TeacherPortal({
     if (holidayOverrides[dStr]) {
       return holidayOverrides[dStr];
     }
-    // Check automatic public holidays for June 2026 (index 5)
+    // Check automatic public holidays / vacations for June 2026 (index 5)
     if (selectedYear === 2026 && selectedMonth === 5) {
       if (dayNum === 5) return "BAKRID";
+      if (dayNum < 12) return "SUMMER HOLIDAYS";
     }
     return null;
   };
 
   const getMaxVisibleDay = () => {
     const todayObj = new Date();
+    let maxDay = 0;
+
     if (selectedYear < todayObj.getFullYear()) {
-      return numDays;
+      maxDay = numDays;
+    } else if (selectedYear === todayObj.getFullYear() && selectedMonth < todayObj.getMonth()) {
+      maxDay = numDays;
+    } else if (selectedYear === todayObj.getFullYear() && selectedMonth === todayObj.getMonth()) {
+      maxDay = todayObj.getDate();
     }
-    if (selectedYear === todayObj.getFullYear() && selectedMonth < todayObj.getMonth()) {
-      return numDays;
+
+    // Include the day of the currently focused attendance date if it is in this month/year
+    const parts = attendanceDate.split('-');
+    if (parts.length === 3) {
+      const attYr = parseInt(parts[0], 10);
+      const attMo = parseInt(parts[1], 10) - 1;
+      const attDa = parseInt(parts[2], 10);
+      if (attYr === selectedYear && attMo === selectedMonth) {
+        if (attDa > maxDay) {
+          maxDay = attDa;
+        }
+      }
     }
-    if (selectedYear === todayObj.getFullYear() && selectedMonth === todayObj.getMonth()) {
-      return todayObj.getDate();
-    }
-    return 0; // Future months are completely blank
+
+    // Include any day that has a submitted attendance record in the list
+    attendanceReports.forEach(r => {
+      if (r.classStr === selectedClass && r.section === selectedSection) {
+        const rp = r.date.split('-');
+        if (rp.length === 3) {
+          const rYr = parseInt(rp[0], 10);
+          const rMo = parseInt(rp[1], 10) - 1;
+          const rDa = parseInt(rp[2], 10);
+          if (rYr === selectedYear && rMo === selectedMonth) {
+            if (rDa > maxDay) {
+              maxDay = rDa;
+            }
+          }
+        }
+      }
+    });
+
+    // Also scan local in-memory submitted status
+    Object.keys(localSubmittedClassSectionDates).forEach(key => {
+      if (key.startsWith(`${selectedClass}_${selectedSection}_`)) {
+        const datePart = key.replace(`${selectedClass}_${selectedSection}_`, '');
+        const rp = datePart.split('-');
+        if (rp.length === 3) {
+          const rYr = parseInt(rp[0], 10);
+          const rMo = parseInt(rp[1], 10) - 1;
+          const rDa = parseInt(rp[2], 10);
+          if (rYr === selectedYear && rMo === selectedMonth) {
+            if (rDa > maxDay) {
+              maxDay = rDa;
+            }
+          }
+        }
+      }
+    });
+
+    return Math.min(maxDay, numDays);
   };
 
   const getMaxVisibleDayForStats = () => {
-    const todayObj = new Date();
-    if (selectedYear < todayObj.getFullYear()) {
-      return numDays;
-    }
-    if (selectedYear === todayObj.getFullYear() && selectedMonth < todayObj.getMonth()) {
-      return numDays;
-    }
-    if (selectedYear === todayObj.getFullYear() && selectedMonth === todayObj.getMonth()) {
-      return todaySubmitted ? todayObj.getDate() : todayObj.getDate() - 1;
-    }
-    return 0; // Future months are completely blank
+    return getMaxVisibleDay();
   };
 
   const getStudentStatus = (student: Student, dayNum: number) => {
@@ -439,18 +653,49 @@ export default function TeacherPortal({
       return 'H';
     }
 
-    // 3. Constraint: If today's attendance has not been submitted, then today's column must remain empty
-    if (isToday && !todaySubmitted) {
+    // Is this date submitted?
+    const isAttendanceSubmittedForDate = !!attendanceReports.find(
+      r => r.classStr === selectedClass && r.section === selectedSection && r.date === dStr
+    ) || !!localSubmittedClassSectionDates[`${selectedClass}_${selectedSection}_${dStr}`];
+
+    // Check for locally saved individual click statuses in localStorage for this date
+    if (isAttendanceSubmittedForDate) {
+      try {
+        const saved = localStorage.getItem(`edumeal_click_status_${dStr}`);
+        if (saved) {
+          const clickDict = JSON.parse(saved);
+          const status = clickDict[student.id];
+          if (status === 'P') return 'P';
+          if (status === 'A') return 'A';
+          // Fallback to 'P' if the date is submitted but individual status not found
+          return 'P';
+        }
+      } catch (e) {
+        console.error('Failed to parse click status for date', dStr, e);
+      }
+    }
+
+    // 3. If it is the currently selected date, load live tap status
+    if (dStr === attendanceDate) {
+      const clickStatus = todayClickStatus[student.id];
+      if (clickStatus === 'P') return 'P';
+      if (clickStatus === 'A') return 'A';
+      if (isAttendanceSubmittedForDate) return 'P';
       return '';
     }
 
-    // 4. Check cell overrides
+    // 4. Constraint: If today's attendance has not been submitted, then today's column must remain empty
+    if (isToday && !isAttendanceSubmittedForDate) {
+      return '';
+    }
+
+    // 5. Check cell overrides
     const key = `${student.id}_${dStr}`;
     if (sheetOverrides[key]) {
       return sheetOverrides[key];
     }
 
-    // 5. Today state checks
+    // 6. If it is high-level today fallback
     if (isToday) {
       const clickStatus = todayClickStatus[student.id];
       if (clickStatus === 'P') return 'P';
@@ -458,15 +703,16 @@ export default function TeacherPortal({
       return student.present ? 'P' : 'A';
     }
 
-    // 6. Standard historical fallback based on hashes
+    // 7. Standard historical fallback based on hashes (ONLY if attendance was actually posted/submitted for that day)
     const reportForDate = attendanceReports.find(
       r => r.classStr === selectedClass && r.section === selectedSection && r.date === dStr
     );
 
-    let threshold = 88;
-    if (reportForDate) {
-      threshold = (reportForDate.totalPresent / (reportForDate.totalStudents || 1)) * 100;
+    if (!reportForDate) {
+      return '';
     }
+
+    const threshold = (reportForDate.totalPresent / (reportForDate.totalStudents || 1)) * 100;
 
     let hash = 0;
     const combined = student.id + dStr;
@@ -527,8 +773,10 @@ export default function TeacherPortal({
         const s = getStudentStatus(student, dayNum);
         if (s === 'P') {
           totalPresenceCounts++;
+          totalCellEvaluated++;
+        } else if (s === 'A') {
+          totalCellEvaluated++;
         }
-        totalCellEvaluated++;
       }
     });
   });
@@ -538,17 +786,45 @@ export default function TeacherPortal({
     : '0.0';
 
   const handleExportCSV = () => {
-    const headers = ["Serial No.", "Student Name", ...daysInMonthArray.map(d => `Day ${d}`)];
+    const headers = [
+      "Serial No.", 
+      "Student Name", 
+      ...daysInMonthArray.map(d => `Day ${d}`),
+      "Days Present",
+      "Days Absent",
+      "Percentage"
+    ];
     const csvRows = [headers.join(",")];
 
     filteredStudents.forEach((student, idx) => {
+      // Pre-calculate statistics for this child
+      let presentCount = 0;
+      let absentCount = 0;
+      daysInMonthArray.forEach(dayNum => {
+        const isSunday = getDayInfo(dayNum).isSunday;
+        const isHoliday = getHolidayForDay(dayNum) !== null;
+        if (isSunday || isHoliday) return;
+        
+        const status = getStudentStatus(student, dayNum);
+        if (status === 'P') {
+          presentCount++;
+        } else if (status === 'A') {
+          absentCount++;
+        }
+      });
+      const total = presentCount + absentCount;
+      const pct = total > 0 ? ((presentCount / total) * 100).toFixed(1) + '%' : '0.0%';
+
       const rowData = [
         (idx + 1).toString(),
         student.name,
         ...daysInMonthArray.map(dayNum => {
           const status = getStudentStatus(student, dayNum);
           return status === 'SUN' ? 'SUNDAY' : status;
-        })
+        }),
+        presentCount.toString(),
+        absentCount.toString(),
+        pct
       ];
       rowData[1] = `"${rowData[1]}"`; // wrap names
       csvRows.push(rowData.join(","));
@@ -660,14 +936,18 @@ export default function TeacherPortal({
               </div>
             </div>
             <div className="flex items-center gap-2">
-              {todaySubmitted ? (
+              {isClosedToday ? (
+                <span className="text-xs bg-slate-500 text-white font-extrabold px-3 py-1.5 rounded-full flex items-center gap-1 shadow-sm">
+                  ● SCHOOL CLOSED ON SELECTED DATE
+                </span>
+              ) : todaySubmitted ? (
                 <span className="text-xs bg-emerald-600 text-white font-extrabold px-3 py-1.5 rounded-full flex items-center gap-1 shadow-sm">
                   <span className="w-2 h-2 bg-white rounded-full animate-ping"></span>
-                  ● SUCCESS: SUBMITTED FOR TODAY
+                  ● SUCCESS: SUBMITTED FOR THE DATE
                 </span>
               ) : (
                 <span className="text-xs bg-red-600 text-white font-extrabold px-3 py-1.5 rounded-full flex items-center gap-1 shadow-sm animate-pulse">
-                  ● TODAY PENDING - NOT POSTED
+                  ● PENDING - NOT POSTED
                 </span>
               )}
             </div>
@@ -679,12 +959,23 @@ export default function TeacherPortal({
               <div className="bg-primary/10 text-primary p-1.5 rounded-lg">
                 <Calendar className="w-4 h-4" />
               </div>
-              <span className="text-xs sm:text-sm font-bold text-on-surface">
-                Today's Date: <span className="font-mono text-primary font-black tracking-wide ml-1 px-2 py-0.5 bg-white border border-outline-variant rounded-md">{todayDate}</span>
-              </span>
+              <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                <span className="text-xs sm:text-sm font-bold text-on-surface">
+                  Attendance Selection Date:
+                </span>
+                <input 
+                  type="date"
+                  value={attendanceDate}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    if (val) setAttendanceDate(val);
+                  }}
+                  className="bg-white border border-outline-variant rounded-md px-2.5 py-1 text-xs sm:text-sm font-mono text-primary font-black tracking-wide focus:outline-none focus:ring-1 focus:ring-primary shadow-3xs"
+                />
+              </div>
               {(() => {
                 // Check if today has a holiday override
-                const hol = holidayOverrides[todayDate];
+                const hol = holidayOverrides[attendanceDate];
                 if (hol) {
                   return (
                     <span className="text-xs bg-amber-100 text-amber-800 border border-amber-300 px-2.5 py-0.5 rounded-full font-extrabold ml-1 sm:ml-2">
@@ -914,7 +1205,7 @@ export default function TeacherPortal({
                                   type="button"
                                   onClick={() => handleStatusClick(s.id)}
                                   className="px-4 py-1.5 rounded-full text-[10px] font-extrabold tracking-wider bg-emerald-600 text-white border border-emerald-700 hover:bg-emerald-700 shadow-2xs transition-all active:scale-95 cursor-pointer flex items-center justify-center gap-1 mx-auto"
-                                  title="Double-click to mark as Absent (Red) / Single tap to toggle"
+                                  title="Click to mark as Absent"
                                 >
                                   <Check className="w-3 h-3" />
                                   <span>PRESENT</span>
@@ -926,7 +1217,7 @@ export default function TeacherPortal({
                                   type="button"
                                   onClick={() => handleStatusClick(s.id)}
                                   className="px-4 py-1.5 rounded-full text-[10px] font-extrabold tracking-wider bg-rose-600 text-white border border-rose-700 hover:bg-rose-700 shadow-2xs transition-all active:scale-95 cursor-pointer flex items-center justify-center gap-1 mx-auto animate-fade-in"
-                                  title="Single tap to mark as Present (Green)"
+                                  title="Click to mark as Present"
                                 >
                                   <Users className="w-3 h-3" />
                                   <span>ABSENT</span>
@@ -938,9 +1229,9 @@ export default function TeacherPortal({
                                   type="button"
                                   onClick={() => handleStatusClick(s.id)}
                                   className="px-4 py-1.5 rounded-full text-[10px] font-extrabold tracking-wider bg-slate-100 text-slate-600 border border-slate-300 hover:bg-slate-200 shadow-3xs transition-all active:scale-95 cursor-pointer flex items-center justify-center gap-1 mx-auto font-medium"
-                                  title="Single tap -> Present (Green), Double-click -> Absent (Red)"
+                                  title="Unmarked. Click to mark as Present."
                                 >
-                                  <span className="w-1.5 h-1.5 bg-slate-400 rounded-full"></span>
+                                  <span className="w-1.5 h-1.5 bg-slate-400 rounded-full animate-pulse"></span>
                                   <span>UNMARKED</span>
                                 </button>
                               );
@@ -983,13 +1274,22 @@ export default function TeacherPortal({
           <div className="bg-surface-container-lowest p-4 rounded-2xl border border-outline-variant shadow-sm flex flex-col md:flex-row items-center justify-between gap-4">
             <div className="flex gap-2 items-center text-xs text-on-surface-variant">
               <Sparkles className="w-4 h-4 text-tertiary" />
-              <span>Currently Registry: <strong>{selectedClass} - {selectedSection}</strong> • {totalStudents} Enrolled ({presentStudents} present)</span>
+              {isClosedToday ? (
+                <span>Currently Registry: <strong>{selectedClass} - {selectedSection}</strong> • School Closed Today (No Attendance Required)</span>
+              ) : (
+                <span>Currently Registry: <strong>{selectedClass} - {selectedSection}</strong> • {totalStudents} Enrolled ({presentStudents} present)</span>
+              )}
             </div>
             <button 
               onClick={handleSubmit}
-              className="w-full md:w-auto bg-primary hover:bg-primary-hover text-white font-extrabold text-sm py-2.5 px-8 rounded-lg shadow-sm transition-all focus:ring-2 focus:ring-primary/20 flex items-center justify-center gap-2"
+              disabled={isClosedToday}
+              className={`w-full md:w-auto font-extrabold text-sm py-2.5 px-8 rounded-lg shadow-sm transition-all focus:ring-2 flex items-center justify-center gap-2 ${
+                isClosedToday 
+                  ? "bg-slate-300 text-slate-500 cursor-not-allowed"
+                  : "bg-primary hover:bg-primary-hover text-white focus:ring-primary/20 cursor-pointer"
+              }`}
             >
-              Submit Attendance Roll
+              {isClosedToday ? "School Closed" : "Submit Attendance Roll"}
             </button>
           </div>
         </>
@@ -1142,6 +1442,10 @@ export default function TeacherPortal({
                           let presentCount = 0;
                           let absentCount = 0;
                           daysInMonthArray.forEach(dayNum => {
+                            const isSunday = getDayInfo(dayNum).isSunday;
+                            const isHoliday = getHolidayForDay(dayNum) !== null;
+                            if (isSunday || isHoliday) return;
+
                             const status = getStudentStatus(student, dayNum);
                             if (status === 'P') {
                               presentCount++;
@@ -1191,7 +1495,8 @@ export default function TeacherPortal({
                                     <span className="text-[8px] font-extrabold text-slate-300">SUN</span>
                                   ) : (
                                     (() => {
-                                      const isHolidayChar = status && status !== 'P' && status !== 'A' && status !== 'SUN';
+                                      const isHoliday = getHolidayForDay(dayNum) !== null;
+                                      const isHolidayChar = isHoliday && status !== 'SUN';
                                       if (isHolidayChar) {
                                         return (
                                           <span 
@@ -1275,6 +1580,79 @@ export default function TeacherPortal({
               <div className="text-[10px] text-on-surface-variant italic font-semibold">
                 💡 Tip: Click any student's P/A tile in the grid to instantly override!
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Absolute Overlay Dialog Portal matching EduMeal premium theme */}
+      {dialogState.isOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 animate-fade-in" id="custom-dialog-overlay">
+          <div className="bg-white rounded-2xl shadow-xl border border-outline-variant max-w-md w-full overflow-hidden animate-scale-up">
+            <div className="p-6">
+              <div className="flex items-start gap-4">
+                <div className={`p-3 rounded-full flex-shrink-0 ${
+                  dialogState.type === 'alert'
+                    ? 'bg-amber-50 text-amber-600 border border-amber-200'
+                    : dialogState.type === 'prompt'
+                    ? 'bg-primary/10 text-primary border border-primary/20'
+                    : 'bg-emerald-50 text-emerald-600 border border-emerald-200'
+                }`}>
+                  {dialogState.type === 'alert' ? (
+                    <AlertTriangle className="w-6 h-6" />
+                  ) : dialogState.type === 'prompt' ? (
+                    <Calendar className="w-6 h-6" />
+                  ) : (
+                    <HelpCircle className="w-6 h-6" />
+                  )}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <h3 className="text-base font-extrabold text-on-surface tracking-tight leading-none mb-2 select-none">
+                    {dialogState.title}
+                  </h3>
+                  <p className="text-xs font-semibold text-on-surface-variant leading-relaxed whitespace-pre-line select-none">
+                    {dialogState.message}
+                  </p>
+                  
+                  {dialogState.type === 'prompt' && (
+                    <div className="mt-4">
+                      <input
+                        type="text"
+                        value={dialogInput}
+                        onChange={(e) => setDialogInput(e.target.value)}
+                        className="w-full bg-white border border-outline-variant rounded-lg px-3 py-2 text-xs font-mono text-primary font-black focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary shadow-inner"
+                        placeholder="e.g., NATIONAL HOLIDAY"
+                        autoFocus
+                      />
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+            
+            <div className="bg-slate-50 px-6 py-4 flex items-center justify-end gap-2 border-t border-outline-variant">
+              {dialogState.type !== 'alert' && (
+                <button
+                  type="button"
+                  onClick={() => dialogState.onCancel?.()}
+                  className="px-4 py-2 text-xs font-bold text-on-surface-variant hover:bg-slate-100 border border-outline-variant rounded-lg transition-all active:scale-95 cursor-pointer"
+                >
+                  {dialogState.type === 'prompt' ? 'Cancel' : 'No / Cancel'}
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => dialogState.onConfirm(dialogState.type === 'prompt' ? dialogInput : undefined)}
+                className={`px-5 py-2 text-xs font-extrabold text-white rounded-lg transition-all active:scale-95 cursor-pointer shadow-3xs flex items-center gap-1.5 ${
+                  dialogState.type === 'alert'
+                    ? 'bg-amber-600 hover:bg-amber-700'
+                    : dialogState.type === 'prompt'
+                    ? 'bg-primary hover:bg-primary-hover'
+                    : 'bg-emerald-600 hover:bg-emerald-700'
+                }`}
+              >
+                {dialogState.type === 'alert' ? 'OK' : dialogState.type === 'prompt' ? 'Save' : 'Yes / Proceed'}
+              </button>
             </div>
           </div>
         </div>

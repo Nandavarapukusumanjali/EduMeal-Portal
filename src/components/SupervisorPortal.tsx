@@ -279,30 +279,66 @@ export default function SupervisorPortal({
             { classStr: 'Class 10', section: 'Section A' },
             { classStr: 'Class 10', section: 'Section B' }
           ].map(it => {
-            const todayStr = (() => {
+            const todayData = (() => {
               const d = new Date();
+              const isSunday = d.getDay() === 0;
               const yr = d.getFullYear();
               const mo = String(d.getMonth() + 1).padStart(2, '0');
               const da = String(d.getDate()).padStart(2, '0');
-              return `${yr}-${mo}-${da}`;
+              const todayStr = `${yr}-${mo}-${da}`;
+              
+              let isHoliday = false;
+              let holidayName = "";
+              try {
+                const saved = localStorage.getItem('edumeal_holiday_overrides');
+                const overrides = saved ? JSON.parse(saved) : {};
+                if (overrides[todayStr]) {
+                  isHoliday = true;
+                  holidayName = overrides[todayStr];
+                }
+              } catch {}
+              
+              if (yr === 2026 && d.getMonth() === 5) {
+                if (d.getDate() === 5) {
+                  isHoliday = true;
+                  holidayName = "BAKRID";
+                } else if (d.getDate() < 12) {
+                  isHoliday = true;
+                  holidayName = "SUMMER HOLIDAYS";
+                }
+              }
+              return { todayStr, isSunday, isHoliday, holidayName };
             })();
+
             const isPosted = attendanceReports.some(
-              r => r.classStr === it.classStr && r.section === it.section && r.date === todayStr
+              r => r.classStr === it.classStr && r.section === it.section && r.date === todayData.todayStr
             );
+            const isClosed = todayData.isSunday || todayData.isHoliday;
+
+            let cardBgAndBorder = 'bg-red-55 bg-red-50/40 border-red-200 text-red-700';
+            let dotColor = 'bg-red-500 animate-pulse';
+            let statusText = 'PENDING';
+
+            if (isClosed) {
+              cardBgAndBorder = 'bg-slate-50 border-slate-200 text-slate-500';
+              dotColor = 'bg-slate-400';
+              statusText = todayData.isSunday ? 'CLOSED (SUNDAY)' : `CLOSED (${todayData.holidayName})`;
+            } else if (isPosted) {
+              cardBgAndBorder = 'bg-emerald-50/50 border-emerald-200 text-emerald-800';
+              dotColor = 'bg-emerald-600';
+              statusText = 'SUBMITTED';
+            }
+
             return (
               <div 
                 key={`${it.classStr}-${it.section}`}
-                className={`p-3 rounded-xl border flex flex-col justify-between transition-all ${
-                  isPosted 
-                    ? 'bg-emerald-50/50 border-emerald-200 text-emerald-800' 
-                    : 'bg-red-55 bg-red-50/40 border-red-200 text-red-700'
-                }`}
+                className={`p-3 rounded-xl border flex flex-col justify-between transition-all ${cardBgAndBorder}`}
               >
                 <div className="font-extrabold text-xs">{it.classStr}</div>
                 <div className="text-[10px] font-bold text-on-surface-variant">{it.section}</div>
                 <div className="mt-2 text-[10px] font-extrabold flex items-center gap-1">
-                  <span className={`w-2 h-2 rounded-full ${isPosted ? 'bg-emerald-600' : 'bg-red-500 animate-pulse'}`}></span>
-                  {isPosted ? 'SUBMITTED' : 'PENDING'}
+                  <span className={`w-2 h-2 rounded-full ${dotColor}`}></span>
+                  {statusText}
                 </div>
               </div>
             );
