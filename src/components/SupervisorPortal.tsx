@@ -9,6 +9,7 @@ interface SupervisorPortalProps {
   onBackToWelcome: () => void;
   attendanceReports?: AttendanceReport[];
   wastageReports?: DailyWastageReport[];
+  students?: Student[];
 }
 
 export default function SupervisorPortal({
@@ -17,7 +18,8 @@ export default function SupervisorPortal({
   onAddWastageReport,
   onBackToWelcome,
   attendanceReports = [],
-  wastageReports = []
+  wastageReports = [],
+  students = []
 }: SupervisorPortalProps) {
   // Local state to override attendance count for testing/simulation
   const [overrideCount, setOverrideCount] = useState<number>(presentStudentCount || totalStudentCount || 150);
@@ -394,14 +396,48 @@ export default function SupervisorPortal({
             return (
               <div 
                 key={`${it.classStr}-${it.section}`}
-                className={`p-3 rounded-xl border flex flex-col justify-between transition-all ${cardBgAndBorder}`}
+                className={`p-3.5 rounded-xl border flex flex-col justify-between transition-all ${cardBgAndBorder}`}
               >
-                <div className="font-extrabold text-xs">{it.classStr}</div>
-                <div className="text-[10px] font-bold text-on-surface-variant">{it.section}</div>
-                <div className="mt-2 text-[10px] font-extrabold flex items-center gap-1">
-                  <span className={`w-2 h-2 rounded-full ${dotColor}`}></span>
-                  {statusText}
-                </div>
+                {(() => {
+                  const matchingReport = attendanceReports.find(
+                    r => r.classStr === it.classStr && r.section === it.section && r.date === todayData.todayStr
+                  );
+                  const classStudents = students.filter(
+                    s => s.class === it.classStr && s.section === it.section
+                  );
+                  const total = matchingReport ? matchingReport.totalStudents : (classStudents.length || 30);
+                  const present = matchingReport ? matchingReport.totalPresent : 0;
+                  const absent = matchingReport ? matchingReport.totalAbsent : 0;
+
+                  return (
+                    <>
+                      <div>
+                        <div className="font-extrabold text-xs">{it.classStr}</div>
+                        <div className="text-[10px] font-bold text-on-surface-variant mb-1.5">{it.section}</div>
+                        
+                        <div className="mt-2 pt-2 border-t border-dashed border-outline-variant/30 text-[10px] space-y-1">
+                          <div className="flex justify-between items-center">
+                            <span className="opacity-80">Total:</span>
+                            <strong className="font-mono">{total}</strong>
+                          </div>
+                          <div className="flex justify-between items-center">
+                            <span className="opacity-80">Present:</span>
+                            <strong className="font-mono text-emerald-600">{isPosted ? present : '--'}</strong>
+                          </div>
+                          <div className="flex justify-between items-center">
+                            <span className="opacity-80">Absentees:</span>
+                            <strong className="font-mono text-red-500">{isPosted ? absent : '--'}</strong>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="mt-3 text-[10px] font-extrabold flex items-center gap-1">
+                        <span className={`w-2 h-2 rounded-full ${dotColor}`}></span>
+                        {statusText}
+                      </div>
+                    </>
+                  );
+                })()}
               </div>
             );
           })}

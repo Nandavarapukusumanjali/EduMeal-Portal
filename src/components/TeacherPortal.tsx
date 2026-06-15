@@ -151,6 +151,106 @@ export default function TeacherPortal({
     }
   }, [attendanceDate]);
 
+  // Keep track of the original status of students for rollback/cancel
+  const [snapshotKey, setSnapshotKey] = useState<string>("");
+  const [originalSnapshot, setOriginalSnapshot] = useState<{
+    clickStatus: { [studentId: string]: 'P' | 'A' | 'NOT_MARKED' };
+    studentPresents: { [studentId: string]: boolean };
+  } | null>(null);
+
+  React.useEffect(() => {
+    const currentKey = `${selectedClass}_${selectedSection}_${attendanceDate}`;
+    const classStudents = students.filter(s => s.class === selectedClass && s.section === selectedSection);
+    
+    // If we have actual students loaded and the snapshot is either not for this key OR is currently unset
+    if (classStudents.length > 0 && snapshotKey !== currentKey) {
+      let savedClickStatus: { [key: string]: 'P' | 'A' | 'NOT_MARKED' } = {};
+      try {
+        const saved = localStorage.getItem(`edumeal_click_status_${attendanceDate}`);
+        if (saved) {
+          savedClickStatus = JSON.parse(saved);
+        }
+      } catch (e) {
+        console.error(e);
+      }
+
+      const originalClick: { [key: string]: 'P' | 'A' | 'NOT_MARKED' } = {};
+      const originalPresents: { [key: string]: boolean } = {};
+
+      classStudents.forEach(s => {
+        // Find if this student has a saved click status, if not we back up as of now
+        originalClick[s.id] = savedClickStatus[s.id] || 'NOT_MARKED';
+        originalPresents[s.id] = s.present ?? true;
+      });
+
+      setOriginalSnapshot({
+        clickStatus: originalClick,
+        studentPresents: originalPresents,
+      });
+      setSnapshotKey(currentKey);
+    }
+  }, [selectedClass, selectedSection, attendanceDate, students, snapshotKey]);
+
+  // Synchronise or back up the original submitted slice if today is already submitted
+  React.useEffect(() => {
+    const todayReport = attendanceReports.find(
+      r => r.classStr === selectedClass && r.section === selectedSection && r.date === attendanceDate
+    );
+    const todaySubmittedInternal = !!todayReport || !!localSubmittedClassSectionDates[`${selectedClass}_${selectedSection}_${attendanceDate}`];
+
+    if (todaySubmittedInternal) {
+      const backupKey = `edumeal_submitted_backup_${selectedClass}_${selectedSection}_${attendanceDate}`;
+      const existingBackup = localStorage.getItem(backupKey);
+      if (!existingBackup) {
+        const classStudents = students.filter(s => s.class === selectedClass && s.section === selectedSection);
+        const currentBackupSlice: { [key: string]: 'P' | 'A' | 'NOT_MARKED' } = {};
+        classStudents.forEach(s => {
+          currentBackupSlice[s.id] = todayClickStatus[s.id] || 'NOT_MARKED';
+        });
+        localStorage.setItem(backupKey, JSON.stringify(currentBackupSlice));
+      }
+    }
+  }, [attendanceReports, localSubmittedClassSectionDates, selectedClass, selectedSection, attendanceDate, todayClickStatus, students]);
+
+  const handleRollbackChanges = async () => {
+    if (originalSnapshot) {
+      try {
+        // Restore local and DB student states for this class/section
+        const updatedStudentsList = students.map(s => {
+          if (s.class === selectedClass && s.section === selectedSection) {
+            const wasPresent = originalSnapshot.studentPresents[s.id] ?? true;
+            updateStudent(s.id, { present: wasPresent });
+            return { ...s, present: wasPresent };
+          }
+          return s;
+        });
+
+        // Reconstruct active click statuses
+        const restoredClickStatus = { ...todayClickStatus, ...originalSnapshot.clickStatus };
+
+        setTodayClickStatus(restoredClickStatus);
+        localStorage.setItem(`edumeal_click_status_${attendanceDate}`, JSON.stringify(restoredClickStatus));
+        onUpdateStudents(updatedStudentsList);
+
+        // Also back up this restored state under backupKey just in case
+        const backupKey = `edumeal_submitted_backup_${selectedClass}_${selectedSection}_${attendanceDate}`;
+        localStorage.setItem(backupKey, JSON.stringify(originalSnapshot.clickStatus));
+
+        showCustomAlert(
+          "Changes Discarded",
+          "All changes have been successfully discarded, and attendance rolls have been reverted to the last submitted state."
+        );
+      } catch (e) {
+        console.error("Failed to restore original statuses:", e);
+      }
+    } else {
+      showCustomAlert(
+        "No Changes to Revert",
+        "Could not find a backup of the original submitted attendance record to roll back to."
+      );
+    }
+  };
+
   const handleStatusClick = (studentId: string) => {
     const current = todayClickStatus[studentId];
     // Start as unmarked (undefined). First click -> Present (P). Toggle then flips: P -> A -> P.
@@ -456,56 +556,147 @@ export default function TeacherPortal({
 
       const confirmMsg = `Are you sure you want to submit attendance for ${selectedClass} - ${selectedSection} on date ${attendanceDate}?\n\nAbsentees (Roll Numbers / Name):\n${absentees.length > 0 ? absenteeRolls : 'None (100% Attendance)'}\n\nClick 'Yes / Proceed' to post and update records, or 'No / Cancel' to hold as not posted.`;
 
-      showCustomConfirm(
-        "Confirm Attendance Submission",
-        confirmMsg,
-        async () => {
-          try {
-            // Post the attendance (pass the attendanceDate as the 4th argument)
-            onSubmitAttendance(selectedClass, selectedSection, presentCount, attendanceDate);
+      if (todaySubmitted) {
+        showCustomConfirm(
+          "Attendance Already Submitted",
+          "already attendance is submitted and do you want to change or cancel",
+          async () => {
+            try {
+              // Post the attendance (pass the attendanceDate as the 4th argument)
+              onSubmitAttendance(selectedClass, selectedSection, presentCount, attendanceDate);
 
-            // Immediately start updates for local and DB state
-            const updatedStudentsList = students.map(s => {
-              if (s.class === selectedClass && s.section === selectedSection) {
-                const isPresent = workingClickStatus[s.id] !== 'A';
-                updateStudent(s.id, { present: isPresent });
-                return { ...s, present: isPresent };
-              }
-              return s;
-            });
+              // Immediately start updates for local and DB state
+              const updatedStudentsList = students.map(s => {
+                if (s.class === selectedClass && s.section === selectedSection) {
+                  const isPresent = workingClickStatus[s.id] !== 'A';
+                  updateStudent(s.id, { present: isPresent });
+                  return { ...s, present: isPresent };
+                }
+                return s;
+              });
 
-            setTodayClickStatus(workingClickStatus);
-            localStorage.setItem(`edumeal_click_status_${attendanceDate}`, JSON.stringify(workingClickStatus));
-            onUpdateStudents(updatedStudentsList);
+              setTodayClickStatus(workingClickStatus);
+              localStorage.setItem(`edumeal_click_status_${attendanceDate}`, JSON.stringify(workingClickStatus));
+              onUpdateStudents(updatedStudentsList);
 
-            // Mark the date as submitted locally to instantly update the monthly sheet and other components
-            const submissionKey = `${selectedClass}_${selectedSection}_${attendanceDate}`;
-            setLocalSubmittedClassSectionDates(prev => {
-              const updated = { ...prev, [submissionKey]: true };
-              try {
-                localStorage.setItem('edumeal_submitted_dates', JSON.stringify(updated));
-              } catch (err) {
-                console.error(err);
-              }
-              return updated;
-            });
+              // Save the new slice as backup
+              const backupKey = `edumeal_submitted_backup_${selectedClass}_${selectedSection}_${attendanceDate}`;
+              const newBackupSlice: { [key: string]: 'P' | 'A' | 'NOT_MARKED' } = {};
+              classStudents.forEach(s => {
+                newBackupSlice[s.id] = workingClickStatus[s.id] || 'NOT_MARKED';
+              });
+              localStorage.setItem(backupKey, JSON.stringify(newBackupSlice));
 
-            showCustomAlert(
-              "Attendance Posted Successfully",
-              `Attendance for ${selectedClass} - ${selectedSection} on date ${attendanceDate} posted successfully!\n\nRegistered: ${classStudents.length} students.\nPresent: ${presentCount}.\nAbsentees: ${absentees.length}.`
-            );
-          } catch (err) {
-            console.error('Failed to submit attendance roll:', err);
-            showCustomAlert("Submission Failed", "An error occurred while posting attendance. Please try again.");
+              // Mark the date as submitted locally to instantly update the monthly sheet and other components
+              const submissionKey = `${selectedClass}_${selectedSection}_${attendanceDate}`;
+              setLocalSubmittedClassSectionDates(prev => {
+                const updated = { ...prev, [submissionKey]: true };
+                try {
+                  localStorage.setItem('edumeal_submitted_dates', JSON.stringify(updated));
+                } catch (err) {
+                  console.error(err);
+                }
+                return updated;
+              });
+
+              // Update snapshot baseline
+              const committedPresents: { [key: string]: boolean } = {};
+              const committedClick: { [key: string]: 'P' | 'A' | 'NOT_MARKED' } = {};
+              classStudents.forEach(s => {
+                committedPresents[s.id] = workingClickStatus[s.id] !== 'A';
+                committedClick[s.id] = workingClickStatus[s.id] || 'NOT_MARKED';
+              });
+              setOriginalSnapshot({
+                clickStatus: committedClick,
+                studentPresents: committedPresents,
+              });
+
+              showCustomAlert(
+                "Attendance Updated Successfully",
+                `Attendance for ${selectedClass} - ${selectedSection} on date ${attendanceDate} updated successfully!\n\nRegistered: ${classStudents.length} students.\nPresent: ${presentCount}.\nAbsentees: ${absentees.length}.`
+              );
+            } catch (err) {
+              console.error('Failed to submit attendance roll:', err);
+              showCustomAlert("Submission Failed", "An error occurred while posting attendance. Please try again.");
+            }
+          },
+          () => {
+            // Cancel means "all changes made not applied", revert to previous submitted backup state!
+            handleRollbackChanges();
           }
-        },
-        () => {
-          showCustomAlert(
-            "Submission Cancelled",
-            `Attendance for ${attendanceDate} remains NOT POSTED (Pending status retained).`
-          );
-        }
-      );
+        );
+      } else {
+        showCustomConfirm(
+          "Confirm Attendance Submission",
+          confirmMsg,
+          async () => {
+            try {
+              // Post the attendance (pass the attendanceDate as the 4th argument)
+              onSubmitAttendance(selectedClass, selectedSection, presentCount, attendanceDate);
+
+              // Immediately start updates for local and DB state
+              const updatedStudentsList = students.map(s => {
+                if (s.class === selectedClass && s.section === selectedSection) {
+                  const isPresent = workingClickStatus[s.id] !== 'A';
+                  updateStudent(s.id, { present: isPresent });
+                  return { ...s, present: isPresent };
+                }
+                return s;
+              });
+
+              setTodayClickStatus(workingClickStatus);
+              localStorage.setItem(`edumeal_click_status_${attendanceDate}`, JSON.stringify(workingClickStatus));
+              onUpdateStudents(updatedStudentsList);
+
+              // Save the new slice as backup
+              const backupKey = `edumeal_submitted_backup_${selectedClass}_${selectedSection}_${attendanceDate}`;
+              const newBackupSlice: { [key: string]: 'P' | 'A' | 'NOT_MARKED' } = {};
+              classStudents.forEach(s => {
+                newBackupSlice[s.id] = workingClickStatus[s.id] || 'NOT_MARKED';
+              });
+              localStorage.setItem(backupKey, JSON.stringify(newBackupSlice));
+
+              // Mark the date as submitted locally to instantly update the monthly sheet and other components
+              const submissionKey = `${selectedClass}_${selectedSection}_${attendanceDate}`;
+              setLocalSubmittedClassSectionDates(prev => {
+                const updated = { ...prev, [submissionKey]: true };
+                try {
+                  localStorage.setItem('edumeal_submitted_dates', JSON.stringify(updated));
+                } catch (err) {
+                  console.error(err);
+                }
+                return updated;
+              });
+
+              // Update snapshot baseline
+              const committedPresents: { [key: string]: boolean } = {};
+              const committedClick: { [key: string]: 'P' | 'A' | 'NOT_MARKED' } = {};
+              classStudents.forEach(s => {
+                committedPresents[s.id] = workingClickStatus[s.id] !== 'A';
+                committedClick[s.id] = workingClickStatus[s.id] || 'NOT_MARKED';
+              });
+              setOriginalSnapshot({
+                clickStatus: committedClick,
+                studentPresents: committedPresents,
+              });
+
+              showCustomAlert(
+                "Attendance Posted Successfully",
+                `Attendance for ${selectedClass} - ${selectedSection} on date ${attendanceDate} posted successfully!\n\nRegistered: ${classStudents.length} students.\nPresent: ${presentCount}.\nAbsentees: ${absentees.length}.`
+              );
+            } catch (err) {
+              console.error('Failed to submit attendance roll:', err);
+              showCustomAlert("Submission Failed", "An error occurred while posting attendance. Please try again.");
+            }
+          },
+          () => {
+            showCustomAlert(
+              "Submission Cancelled",
+              `Attendance for ${attendanceDate} remains NOT POSTED (Pending status retained).`
+            );
+          }
+        );
+      }
     };
 
     if (unmarkedStudents.length > 0) {

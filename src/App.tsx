@@ -334,6 +334,7 @@ export default function App() {
             onBackToWelcome={handlePortalExit}
             attendanceReports={attendanceReports}
             wastageReports={wastageReports}
+            students={students}
           />
         )}
 
