@@ -2,11 +2,6 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Global Catch-all safety net (Default Deny)
-    match /{document=**} {
-      allow read, write: if false;
-    }
-
     // Hardened helper primitives
     function isSignedIn() {
       return request.auth != null;
@@ -90,6 +85,11 @@ service cloud.firestore {
 
     match /test/{testId} {
       allow read: if true;
+    }
+
+    // Global Catch-all safety net (Default Deny)
+    match /{document=**} {
+      allow read, write: if false;
     }
   }
 }
