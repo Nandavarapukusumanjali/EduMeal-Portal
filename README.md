@@ -4,6 +4,12 @@
 EduMeal Portal is a professional, full-stack, enterprise-grade digital compliance system meticulously designed to digitize and track the **AP Mid-Day Meal Scheme (MDMS)** program. It bridges the gap between students, educators, and dietary supervisors to streamline attendance tracking, analyze nutrient-dense feedback, optimize daily food production, and systematically combat food wastage.
 
 ---
+# Edu Meal Portal
+
+## Live Demo
+https://edu-meal-portal.vercel.app/
+
+
 
 ## 🚀 Key Functional Modules
 
