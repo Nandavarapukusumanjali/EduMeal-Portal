@@ -87,5 +87,9 @@ service cloud.firestore {
       allow read, list: if isSignedIn();
       allow create, update, delete: if isSignedIn() && (isSupervisor() || isAdmin());
     }
+
+    match /test/{testId} {
+      allow read: if true;
+    }
   }
 }

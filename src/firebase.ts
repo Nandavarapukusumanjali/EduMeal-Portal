@@ -1,13 +1,18 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
-import { getFirestore, doc, getDocFromServer } from 'firebase/firestore';
+import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, doc, getDocFromServer } from 'firebase/firestore';
 import firebaseConfig from '../firebase-applet-config.json';
 
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
 
-// CRITICAL: The app will break without this line specifying the DB ID
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+// Initialize Firestore with robust local persistent cache for seamless offline support
+export const db = initializeFirestore(app, {
+  localCache: persistentLocalCache({
+    tabManager: persistentMultipleTabManager(),
+  })
+}, firebaseConfig.firestoreDatabaseId);
+
 export const auth = getAuth(app);
 
 // Error handling types as specified in the Firebase integration skill instructions
@@ -39,6 +44,7 @@ export interface FirestoreErrorInfo {
 
 export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
   const errMessage = error instanceof Error ? error.message : String(error);
+  const errCode = (error as any)?.code;
   
   // Create formatted FirestoreErrorInfo
   const errInfo: FirestoreErrorInfo = {
@@ -58,7 +64,15 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
     path
   };
   
-  console.error('Firestore Error: ', JSON.stringify(errInfo));
+  console.warn('Firestore Warning/Error info: ', JSON.stringify(errInfo));
+
+  // If Firestore is offline or unavailable, prevent crashing the app.
+  // Allow the client to work seamlessly in offline mode using the local persistent cache.
+  if (errCode === 'unavailable' || errMessage.toLowerCase().includes('unavailable') || errMessage.toLowerCase().includes('could not reach')) {
+    console.warn(`Firestore is operating in local/offline mode gracefully.`);
+    return;
+  }
+  
   throw new Error(JSON.stringify(errInfo));
 }
 
@@ -68,8 +82,12 @@ async function testConnection() {
     // Attempt load from server to verify connection is operational
     await getDocFromServer(doc(db, 'test', 'connection'));
   } catch (error) {
-    if (error instanceof Error && error.message.includes('the client is offline')) {
-      console.error("Please check your Firebase configuration: Client is offline.");
+    const errMessage = error instanceof Error ? error.message : String(error);
+    const errCode = (error as any)?.code;
+    if (errCode === 'unavailable' || errMessage.toLowerCase().includes('offline') || errMessage.toLowerCase().includes('could not reach')) {
+      console.warn("Firestore Notice: Client is operating in offline mode. Local persistent cache is active.");
+    } else {
+      console.error("Firestore test connection error:", error);
     }
   }
 }
