@@ -3,7 +3,7 @@ import { Student, AttendanceReport } from '../types';
 import { 
   Users, CheckCircle, XCircle, Percent, Plus, Edit, Trash, 
   ArrowLeft, Save, Sparkles, Calendar, Printer, Download, RefreshCw, Check,
-  AlertTriangle, HelpCircle
+  AlertTriangle, HelpCircle, LogOut
 } from 'lucide-react';
 import { addStudent, updateStudent, deleteStudent } from '../services/db';
 
@@ -26,8 +26,16 @@ export default function TeacherPortal({
   const [selectedSection, setSelectedSection] = useState<string>('Section A');
   const [searchQuery, setSearchQuery] = useState<string>('');
 
-  // Tab navigation state: 'registry' | 'monthly'
+  // Tabs and view switching
   const [activeTab, setActiveTab] = useState<'registry' | 'monthly'>('registry');
+
+  // DEBUGGING: Log attendance reports when switching tabs
+  React.useEffect(() => {
+    if (activeTab === 'monthly') {
+      console.log('DEBUG: Monthly tab active. Attendance reports count:', attendanceReports.length);
+      console.log('DEBUG: Attendance reports:', attendanceReports);
+    }
+  }, [activeTab, attendanceReports]);
 
   // Month and Year selection for Monthly Attendance Sheet view
   const [selectedMonth, setSelectedMonth] = useState<number>(5); // Default: June (index 5)
@@ -557,7 +565,15 @@ export default function TeacherPortal({
 
     const finalClickStatus = { ...todayClickStatus };
 
-    const proceedWithPosting = (workingClickStatus: typeof todayClickStatus) => {
+    const proceedWithPosting = (originalWorkingClickStatus: typeof todayClickStatus) => {
+      // Force all unmarked students to 'P' (Present)
+      const workingClickStatus = { ...originalWorkingClickStatus };
+      classStudents.forEach(s => {
+        if (!workingClickStatus[s.id] || workingClickStatus[s.id] === 'NOT_MARKED') {
+          workingClickStatus[s.id] = 'P';
+        }
+      });
+
       const absentees = classStudents.filter(s => workingClickStatus[s.id] === 'A');
       const presentCount = classStudents.length - absentees.length;
 
@@ -862,6 +878,8 @@ export default function TeacherPortal({
 
     if (reportForDate?.studentDetails && reportForDate.studentDetails[student.id]) {
       return reportForDate.studentDetails[student.id];
+    } else if (reportForDate) {
+      console.warn(`DEBUG: Report found for ${dStr}, but studentDetails missing or student ${student.id} not found in studentDetails keys: ${reportForDate.studentDetails ? Object.keys(reportForDate.studentDetails).join(',') : 'UNDEFINED'}`);
     }
 
     // 2. If it is the currently selected date, load live tap status
@@ -1008,6 +1026,13 @@ export default function TeacherPortal({
           >
             <ArrowLeft className="w-4 h-4" />
             Back to Select Portal
+          </button>
+          <button 
+            onClick={onBackToWelcome}
+            className="flex items-center gap-1.5 bg-red-50 text-red-600 hover:bg-red-100 hover:text-red-700 font-bold text-xs py-1.5 px-3 rounded-full transition-colors cursor-pointer mb-2"
+          >
+            <LogOut className="w-3.5 h-3.5" />
+            Logout
           </button>
           <span className="text-secondary font-extrabold uppercase tracking-widest text-xs">Today's Attendance</span>
           <h2 className="font-headline-lg text-2xl md:text-3xl font-bold text-primary mt-1">Classroom Registry</h2>

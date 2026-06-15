@@ -2,15 +2,16 @@ import React, { useState } from 'react';
 import { Role } from '../types';
 import { 
   BookOpen, Utensils, Shield, Users, Radio, Phone, 
-  HelpCircle, GraduationCap, Lock, User, ArrowLeft, AlertCircle, Sparkles, UserPlus, LogIn, X
+  HelpCircle, GraduationCap, Lock, User, ArrowLeft, AlertCircle, Sparkles, UserPlus, LogIn, X, LogOut
 } from 'lucide-react';
 import { authenticateRole, signUpUser } from '../services/auth';
 
 interface WelcomePortalProps {
   onSelectRole: (role: Role) => void;
+  onLogout: () => void;
 }
 
-export default function WelcomePortal({ onSelectRole }: WelcomePortalProps) {
+export default function WelcomePortal({ onSelectRole, onLogout }: WelcomePortalProps) {
   // State to track if we are in the Gate Login mode for a particular role
   const [selectedGateRole, setSelectedGateRole] = useState<Role | null>(null);
   const [isSignUpMode, setIsSignUpMode] = useState(false);
@@ -145,12 +146,22 @@ export default function WelcomePortal({ onSelectRole }: WelcomePortalProps) {
           </div>
         </div>
         
-        <div 
-          onClick={() => setIsUserGuideOpen(true)}
-          className="flex items-center gap-2 text-white hover:underline cursor-pointer font-medium text-sm"
-        >
-          <HelpCircle className="w-4 h-4" />
-          <span className="hidden sm:inline">User Guide</span>
+        <div className="flex items-center gap-4">
+          <div 
+            onClick={() => setIsUserGuideOpen(true)}
+            className="flex items-center gap-2 text-white hover:underline cursor-pointer font-medium text-sm"
+          >
+            <HelpCircle className="w-4 h-4" />
+            <span className="hidden sm:inline">User Guide</span>
+          </div>
+          
+          <button
+            onClick={onLogout}
+            className="flex items-center gap-1.5 bg-white/20 hover:bg-white/30 text-white font-extrabold text-xs py-1.5 px-3 rounded-full transition-colors cursor-pointer"
+          >
+            <LogOut className="w-4 h-4" />
+            <span className="hidden sm:inline">Logout</span>
+          </button>
         </div>
       </header>
 

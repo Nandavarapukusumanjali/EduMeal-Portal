@@ -17,7 +17,7 @@ import {
 import { 
   ArrowLeft, Download, FileText, TrendingUp, HelpCircle, 
   AlertCircle, Lightbulb, Star, ShieldCheck, Printer, FileSpreadsheet,
-  Users, Utensils, ShieldAlert, Calendar, Sparkles, Brain, TrendingDown, Target
+  Users, Utensils, ShieldAlert, Calendar, Sparkles, Brain, TrendingDown, Target, LogOut
 } from 'lucide-react';
 
 interface AdminPortalProps {
@@ -667,6 +667,13 @@ export default function AdminPortal({
           >
             <ArrowLeft className="w-4 h-4" />
             Back to Select Portal
+          </button>
+          <button 
+            onClick={onBackToWelcome}
+            className="flex items-center gap-1.5 bg-red-50 text-red-600 hover:bg-red-100 hover:text-red-700 font-bold text-xs py-1.5 px-3 rounded-full transition-colors cursor-pointer mb-2"
+          >
+            <LogOut className="w-3.5 h-3.5" />
+            Logout
           </button>
           <span className="text-secondary font-extrabold uppercase tracking-widest text-xs">Administrative Overview</span>
           <h2 className="font-headline-lg text-2xl md:text-3xl font-bold text-primary mt-1">Analytics Dashboard</h2>

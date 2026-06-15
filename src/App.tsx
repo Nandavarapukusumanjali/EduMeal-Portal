@@ -11,7 +11,7 @@ import TeacherPortal from './components/TeacherPortal';
 import SupervisorPortal from './components/SupervisorPortal';
 import StudentPortal from './components/StudentPortal';
 import AdminPortal from './components/AdminPortal';
-import { Utensils, Shield, LogOut, Radio, Shuffle, Info, Bell, Settings } from 'lucide-react';
+import { Utensils, Shield, LogOut, Radio, Shuffle, Info, Settings } from 'lucide-react';
 import { 
   subscribeToStudents, 
   subscribeToFeedback, 
@@ -170,6 +170,8 @@ export default function App() {
         attendancePercentage: percentage,
         studentDetails
       };
+      
+      console.log('DEBUG: Saving complete report for:', report.id, 'with students:', Object.keys(studentDetails).length);
 
       // 1. Save locally in state & localStorage immediately so the UI is 100% responsive
       setAttendanceReports(prev => {
@@ -257,19 +259,6 @@ export default function App() {
             {/* NOTIFICATIONS & AVATAR BADGES */}
             <div className="flex items-center gap-4">
               
-              {/* Notification icon log */}
-              <div className="relative p-2 rounded-full hover:bg-white/15 transition-colors cursor-pointer text-white" onClick={() => {
-                setNotificationCount(0);
-                alert('[System Operational Sync]\nLatest logs synced:\n- Teacher classroom register attendance matching complete.\n- Chef requirement index adjusted.\n- Student rating logs verified.');
-              }}>
-                <Bell className="w-5 h-5 text-white" />
-                {notificationCount > 0 && (
-                  <span className="absolute top-1.5 right-1.5 w-4 h-4 bg-red-600 text-[9px] font-extrabold text-white rounded-full flex items-center justify-center animate-pulse">
-                    {notificationCount}
-                  </span>
-                )}
-              </div>
-
               {/* Selected Role Badge */}
               <div className="flex items-center gap-2 bg-white/15 border border-white/15 py-1 px-3 rounded-full text-white">
                 <Shield className="w-3.5 h-3.5 text-white" />
@@ -282,10 +271,10 @@ export default function App() {
               <button 
                 onClick={handlePortalExit}
                 className="flex items-center gap-1 bg-red-50 text-red-600 hover:bg-red-100 hover:text-red-700 font-extrabold text-xs py-1.5 px-3 rounded-full transition-colors cursor-pointer"
-                title="Change Authority Portal"
+                title="Logout"
               >
                 <LogOut className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">Portal Hub</span>
+                <span className="hidden sm:inline">Logout</span>
               </button>
 
             </div>
@@ -298,7 +287,7 @@ export default function App() {
         
         {/* Render active portal context */}
         {activeRole === 'welcome' && (
-          <WelcomePortal onSelectRole={setActiveRole} />
+          <WelcomePortal onSelectRole={setActiveRole} onLogout={handlePortalExit} />
         )}
 
         {activeRole === 'teacher' && (

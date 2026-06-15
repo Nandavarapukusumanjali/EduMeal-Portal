@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { WEEKLY_MENU, StudentFeedback } from '../types';
-import { ArrowLeft, Star, Heart, HelpCircle, Utensils, MessageSquare, Send, ThumbsUp, Coffee, AlertCircle } from 'lucide-react';
+import { ArrowLeft, Star, Heart, HelpCircle, Utensils, MessageSquare, Send, ThumbsUp, Coffee, AlertCircle, LogOut } from 'lucide-react';
 import { auth } from '../firebase';
 import { getUserProfile } from '../services/db';
 
@@ -169,6 +169,13 @@ export default function StudentPortal({ feedbackList = [], onAddFeedback, onBack
           >
             <ArrowLeft className="w-4 h-4" />
             Back to Select Portal
+          </button>
+          <button 
+            onClick={onBackToWelcome}
+            className="flex items-center gap-1.5 bg-red-50 text-red-600 hover:bg-red-100 hover:text-red-700 font-bold text-xs py-1.5 px-3 rounded-full transition-colors cursor-pointer mb-2"
+          >
+            <LogOut className="w-3.5 h-3.5" />
+            Logout
           </button>
           <span className="text-secondary font-extrabold uppercase tracking-widest text-xs">Student Feedback</span>
           <h2 className="font-headline-lg text-2xl md:text-3xl font-bold text-primary mt-1">How was your meal?</h2>
