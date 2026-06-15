@@ -10,7 +10,7 @@ import { addStudent, updateStudent, deleteStudent } from '../services/db';
 interface TeacherPortalProps {
   students: Student[];
   onUpdateStudents: (updatedStudents: Student[]) => void;
-  onSubmitAttendance: (classStr: string, section: string, presentCount: number, customDate?: string) => void;
+  onSubmitAttendance: (classStr: string, section: string, presentCount: number, studentDetails: { [key: string]: 'P' | 'A' }, customDate?: string) => void;
   onBackToWelcome: () => void;
   attendanceReports?: AttendanceReport[];
 }
@@ -562,8 +562,8 @@ export default function TeacherPortal({
           "already attendance is submitted and do you want to change or cancel",
           async () => {
             try {
-              // Post the attendance (pass the attendanceDate as the 4th argument)
-              onSubmitAttendance(selectedClass, selectedSection, presentCount, attendanceDate);
+              // Post the attendance (pass the attendanceDate as the 5th argument)
+              onSubmitAttendance(selectedClass, selectedSection, presentCount, workingClickStatus, attendanceDate);
 
               // Immediately start updates for local and DB state
               const updatedStudentsList = students.map(s => {
@@ -631,8 +631,8 @@ export default function TeacherPortal({
           confirmMsg,
           async () => {
             try {
-              // Post the attendance (pass the attendanceDate as the 4th argument)
-              onSubmitAttendance(selectedClass, selectedSection, presentCount, attendanceDate);
+              // Post the attendance (pass the attendanceDate as the 5th argument)
+              onSubmitAttendance(selectedClass, selectedSection, presentCount, workingClickStatus, attendanceDate);
 
               // Immediately start updates for local and DB state
               const updatedStudentsList = students.map(s => {
@@ -849,8 +849,17 @@ export default function TeacherPortal({
       r => r.classStr === selectedClass && r.section === selectedSection && r.date === dStr
     ) || !!localSubmittedClassSectionDates[`${selectedClass}_${selectedSection}_${dStr}`];
 
-    // Check for locally saved individual click statuses in localStorage for this date
+    // Check for individual click statuses
     if (isAttendanceSubmittedForDate) {
+      // 1. Try to fetch from report (Firestore data)
+      const reportForDate = attendanceReports.find(
+        r => r.classStr === selectedClass && r.section === selectedSection && r.date === dStr
+      );
+      if (reportForDate?.studentDetails) {
+        return reportForDate.studentDetails[student.id] || '';
+      }
+
+      // 2. Fallback to localStorage
       try {
         const saved = localStorage.getItem(`edumeal_click_status_${dStr}`);
         if (saved) {

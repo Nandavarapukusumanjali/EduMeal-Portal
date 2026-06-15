@@ -69,6 +69,7 @@ export interface AttendanceReport {
   totalPresent: number;
   totalAbsent: number;
   attendancePercentage: number;
+  studentDetails?: { [studentId: string]: 'P' | 'A' };
 }
 
 // Fixed Weekly Menu according to the instructions table

@@ -139,7 +139,7 @@ export default function App() {
   };
 
   // Handle attendance submission from TeacherPortal
-  const handleSubmitAttendance = async (classStr: string, section: string, presentCount: number, customDate?: string) => {
+  const handleSubmitAttendance = async (classStr: string, section: string, presentCount: number, studentDetails: { [key: string]: 'P' | 'A' }, customDate?: string) => {
     try {
       setNotificationCount(p => p + 1);
       
@@ -167,7 +167,8 @@ export default function App() {
         totalStudents: total,
         totalPresent: present,
         totalAbsent: absent,
-        attendancePercentage: percentage
+        attendancePercentage: percentage,
+        studentDetails
       };
 
       // 1. Save locally in state & localStorage immediately so the UI is 100% responsive
