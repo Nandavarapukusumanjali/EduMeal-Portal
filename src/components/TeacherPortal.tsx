@@ -143,13 +143,24 @@ export default function TeacherPortal({
   const [todayClickStatus, setTodayClickStatus] = useState<{ [key: string]: 'NOT_MARKED' | 'P' | 'A' }>({});
 
   React.useEffect(() => {
+    // 1. Check Firestore report FIRST
+    const reportForDate = attendanceReports.find(
+      r => r.classStr === selectedClass && r.section === selectedSection && r.date === attendanceDate
+    );
+
+    if (reportForDate?.studentDetails) {
+      setTodayClickStatus(reportForDate.studentDetails);
+      return;
+    }
+
+    // 2. Fallback to localStorage
     try {
       const saved = localStorage.getItem(`edumeal_click_status_${attendanceDate}`);
       setTodayClickStatus(saved ? JSON.parse(saved) : {});
     } catch {
       setTodayClickStatus({});
     }
-  }, [attendanceDate]);
+  }, [attendanceDate, attendanceReports, selectedClass, selectedSection]);
 
   // Keep track of the original status of students for rollback/cancel
   const [snapshotKey, setSnapshotKey] = useState<string>("");
@@ -844,83 +855,29 @@ export default function TeacherPortal({
       return 'H';
     }
 
-    // Is this date submitted?
-    const isAttendanceSubmittedForDate = !!attendanceReports.find(
+    // 1. Get report for this day/class/section
+    const reportForDate = attendanceReports.find(
       r => r.classStr === selectedClass && r.section === selectedSection && r.date === dStr
-    ) || !!localSubmittedClassSectionDates[`${selectedClass}_${selectedSection}_${dStr}`];
+    );
 
-    // Check for individual click statuses
-    if (isAttendanceSubmittedForDate) {
-      // 1. Try to fetch from report (Firestore data)
-      const reportForDate = attendanceReports.find(
-        r => r.classStr === selectedClass && r.section === selectedSection && r.date === dStr
-      );
-      if (reportForDate?.studentDetails) {
-        return reportForDate.studentDetails[student.id] || '';
-      }
-
-      // 2. Fallback to localStorage
-      try {
-        const saved = localStorage.getItem(`edumeal_click_status_${dStr}`);
-        if (saved) {
-          const clickDict = JSON.parse(saved);
-          const status = clickDict[student.id];
-          if (status === 'P') return 'P';
-          if (status === 'A') return 'A';
-          // Only show as unmarked if not P or A
-          return '';
-        }
-      } catch (e) {
-        console.error('Failed to parse click status for date', dStr, e);
-      }
+    if (reportForDate?.studentDetails && reportForDate.studentDetails[student.id]) {
+      return reportForDate.studentDetails[student.id];
     }
 
-    // 3. If it is the currently selected date, load live tap status
+    // 2. If it is the currently selected date, load live tap status
     if (dStr === attendanceDate) {
       const clickStatus = todayClickStatus[student.id];
-      if (clickStatus === 'P') return 'P';
-      if (clickStatus === 'A') return 'A';
-      if (isAttendanceSubmittedForDate) return 'P';
-      return '';
+      return (clickStatus === 'P' || clickStatus === 'A') ? clickStatus : '';
     }
 
-    // 4. Constraint: If today's attendance has not been submitted, then today's column must remain empty
-    if (isToday && !isAttendanceSubmittedForDate) {
-      return '';
-    }
-
-    // 5. Check cell overrides
+    // 3. Check cell overrides for past dates
     const key = `${student.id}_${dStr}`;
     if (sheetOverrides[key]) {
       return sheetOverrides[key];
     }
 
-    // 6. If it is high-level today fallback
-    if (isToday) {
-      const clickStatus = todayClickStatus[student.id];
-      if (clickStatus === 'P') return 'P';
-      if (clickStatus === 'A') return 'A';
-      return '';
-    }
-
-    // 7. Standard historical fallback based on hashes (ONLY if attendance was actually posted/submitted for that day)
-    const reportForDate = attendanceReports.find(
-      r => r.classStr === selectedClass && r.section === selectedSection && r.date === dStr
-    );
-
-    if (!reportForDate) {
-      return '';
-    }
-
-    const threshold = (reportForDate.totalPresent / (reportForDate.totalStudents || 1)) * 100;
-
-    let hash = 0;
-    const combined = student.id + dStr;
-    for (let i = 0; i < combined.length; i++) {
-      hash = combined.charCodeAt(i) + ((hash << 5) - hash);
-    }
-    const score = Math.abs(hash) % 100;
-    return score < threshold ? 'P' : 'A';
+    // 4. Default: Unmarked
+    return '';
   };
 
   const toggleStatusDirectly = (studentId: string, dayNum: number) => {

@@ -7,6 +7,8 @@ EduMeal Portal is a professional, full-stack, enterprise-grade digital complianc
 
 ## 🚀 Key Functional Modules
 
+[Deployed Application](https://edu-meal-portal.vercel.app/)
+
 The application operates as a unified hub dividing clearance levels into four authority-specific portals, all bound by secure cloud integrations:
 
 ### 1. 🧑‍🏫 Teacher Portal (Daily Attendance & Marking)
