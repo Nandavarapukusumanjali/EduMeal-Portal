@@ -891,7 +891,7 @@ export default function TeacherPortal({
       const clickStatus = todayClickStatus[student.id];
       if (clickStatus === 'P') return 'P';
       if (clickStatus === 'A') return 'A';
-      return student.present ? 'P' : 'A';
+      return '';
     }
 
     // 7. Standard historical fallback based on hashes (ONLY if attendance was actually posted/submitted for that day)
