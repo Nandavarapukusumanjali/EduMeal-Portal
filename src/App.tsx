@@ -253,22 +253,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* IMMERSIVE CONGESTION: QUICK ROLE SWITCHER FOR TESTING */}
-            <div className="hidden md:flex items-center gap-2 bg-white/10 px-3 py-1 rounded-full border border-white/15">
-              <Shuffle className="w-3.5 h-3.5 text-white" />
-              <span className="text-[10.5px] font-bold text-white/90">Switch Authority View:</span>
-              <select 
-                value={activeRole} 
-                onChange={(e) => setActiveRole(e.target.value as Role)}
-                className="bg-transparent text-[11px] font-extrabold text-white border-none p-0 focus:outline-none focus:ring-0 cursor-pointer"
-              >
-                <option value="student" className="bg-primary text-white">Student Portal</option>
-                <option value="teacher" className="bg-primary text-white">Teacher Portal</option>
-                <option value="supervisor" className="bg-primary text-white">Kitchen Supervisor</option>
-                <option value="admin" className="bg-primary text-white">Headmaster / Admin</option>
-              </select>
-            </div>
-
             {/* NOTIFICATIONS & AVATAR BADGES */}
             <div className="flex items-center gap-4">
               

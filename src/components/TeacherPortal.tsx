@@ -858,8 +858,8 @@ export default function TeacherPortal({
           const status = clickDict[student.id];
           if (status === 'P') return 'P';
           if (status === 'A') return 'A';
-          // Fallback to 'P' if the date is submitted but individual status not found
-          return 'P';
+          // Only show as unmarked if not P or A
+          return '';
         }
       } catch (e) {
         console.error('Failed to parse click status for date', dStr, e);
