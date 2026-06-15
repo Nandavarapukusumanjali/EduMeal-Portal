@@ -80,7 +80,7 @@ export const WEEKLY_MENU: WeeklyMenu[] = [
     protein: '24g',
     fiber: '8g',
     veggieTag: 'Local Egg tier',
-    image: 'https://images.unsplash.com/photo-1546833999-b9f581a1996d?auto=format&fit=crop&q=80&w=400'
+    image: 'https://img.freepik.com/premium-photo/indian-cuisine-meals-served-banana-leaf-traditional-south-indian-cuisine_875825-50086.jpg?w=740'
   },
   {
     day: 'Tuesday',
@@ -89,7 +89,7 @@ export const WEEKLY_MENU: WeeklyMenu[] = [
     protein: '22g',
     fiber: '6g',
     veggieTag: 'Traditional Sour Rice',
-    image: 'https://images.unsplash.com/photo-1626509653506-af1227f7995f?auto=format&fit=crop&q=80&w=400'
+    image: 'https://img.freepik.com/premium-photo/indian-cuisine-meals-served-banana-leaf-traditional-south-indian-cuisine_875825-50086.jpg?w=740'
   },
   {
     day: 'Wednesday',
@@ -98,7 +98,7 @@ export const WEEKLY_MENU: WeeklyMenu[] = [
     protein: '26g',
     fiber: '10g',
     veggieTag: 'High Fiber Mix',
-    image: 'https://images.unsplash.com/photo-1633945274405-b6c8069047b0?auto=format&fit=crop&q=80&w=400'
+    image: 'https://img.freepik.com/premium-photo/indian-cuisine-meals-served-banana-leaf-traditional-south-indian-cuisine_875825-50086.jpg?w=740'
   },
   {
     day: 'Thursday',
@@ -107,7 +107,7 @@ export const WEEKLY_MENU: WeeklyMenu[] = [
     protein: '20g',
     fiber: '7g',
     veggieTag: 'Nutritious Lentils',
-    image: 'https://images.unsplash.com/photo-1601050690597-df056fb4ce78?auto=format&fit=crop&q=80&w=400'
+    image: 'https://img.freepik.com/premium-photo/indian-cuisine-meals-served-banana-leaf-traditional-south-indian-cuisine_875825-50086.jpg?w=740'
   },
   {
     day: 'Friday',
@@ -116,7 +116,7 @@ export const WEEKLY_MENU: WeeklyMenu[] = [
     protein: '23g',
     fiber: '8g',
     veggieTag: 'Simple Protein',
-    image: 'https://images.unsplash.com/photo-1589301760014-d929f3979dbc?auto=format&fit=crop&q=80&w=400'
+    image: 'https://img.freepik.com/premium-photo/indian-cuisine-meals-served-banana-leaf-traditional-south-indian-cuisine_875825-50086.jpg?w=740'
   },
   {
     day: 'Saturday',
@@ -125,7 +125,7 @@ export const WEEKLY_MENU: WeeklyMenu[] = [
     protein: '18g',
     fiber: '5g',
     veggieTag: 'Weekend Special',
-    image: 'https://images.unsplash.com/photo-1563379091339-03b21ab4a4f8?auto=format&fit=crop&q=80&w=400'
+    image: 'https://img.freepik.com/premium-photo/indian-cuisine-meals-served-banana-leaf-traditional-south-indian-cuisine_875825-50086.jpg?w=740'
   }
 ];
 

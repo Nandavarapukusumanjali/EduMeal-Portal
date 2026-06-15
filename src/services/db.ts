@@ -398,16 +398,17 @@ export async function seedDatabaseIfEmpty() {
       console.log('Seeding historical wastage audits to Firestore...');
       const baselineWastage = [
         {
-          id: 'waste_001',
-          date: new Date(Date.now() - 24*60*60*1000).toISOString().split('T')[0],
+          id: 'waste_012',
+          date: '2026-06-12',
           items: [
-            { item: 'Rice', prepared: 50, consumed: 46.5, remaining: 3.5, wastePercentage: 7, unit: 'kg' },
-            { item: 'Dal', prepared: 20, consumed: 18.8, remaining: 1.2, wastePercentage: 6, unit: 'kg' },
-            { item: 'Eggs', prepared: 120, consumed: 120, remaining: 0, wastePercentage: 0, unit: 'units' }
+            { item: 'Rice', prepared: 50, consumed: 48, remaining: 2, wastePercentage: 4, unit: 'kg' },
+            { item: 'Dal', prepared: 20, consumed: 19, remaining: 1, wastePercentage: 5, unit: 'kg' },
+            { item: 'Egg Curry', prepared: 300, consumed: 294, remaining: 6, wastePercentage: 2, unit: 'units' },
+            { item: 'Chikki', prepared: 300, consumed: 297, remaining: 3, wastePercentage: 1, unit: 'units' }
           ],
-          avgWastePercentage: 4.3,
-          mostWastedItem: 'Rice',
-          mostWastedQty: 3.5
+          avgWastePercentage: 3.0,
+          mostWastedItem: 'Egg Curry',
+          mostWastedQty: 6
         }
       ];
       for (const w of baselineWastage) {
@@ -426,12 +427,12 @@ export async function seedDatabaseIfEmpty() {
       console.log('Seeding compliance feedback models to Firestore...');
       const baselineFeedback = [
         {
-          id: 'feed_001',
-          date: new Date().toISOString().split('T')[0],
-          studentName: 'Rajesh Kumar',
-          itemRatings: { 'Rice': 5, 'Eggs': 4, 'Chikki': 5 },
+          id: 'feed_012',
+          date: '2026-06-12',
+          studentName: 'Yarra Rajesh',
+          itemRatings: { 'Rice': 4.5, 'Dal': 4.3, 'Egg Curry': 4.8, 'Chikki': 4.6 },
           serviceRatings: { taste: 5, quality: 4, temperature: 4, behaviour: 5, cleanliness: 5 },
-          comments: 'We love the hot meals served today!'
+          comments: 'The Egg Curry and Rice on reopening day was served hot and tasted amazing!'
         }
       ];
       for (const f of baselineFeedback) {

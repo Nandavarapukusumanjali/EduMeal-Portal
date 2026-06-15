@@ -333,11 +333,13 @@ export default function App() {
             onAddWastageReport={handleAddWastageReport}
             onBackToWelcome={handlePortalExit}
             attendanceReports={attendanceReports}
+            wastageReports={wastageReports}
           />
         )}
 
         {activeRole === 'student' && (
           <StudentPortal 
+            feedbackList={feedbackList}
             onAddFeedback={handleAddFeedback}
             onBackToWelcome={handlePortalExit}
           />

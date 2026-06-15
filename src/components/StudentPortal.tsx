@@ -1,15 +1,16 @@
 import React, { useState, useEffect } from 'react';
 import { WEEKLY_MENU, StudentFeedback } from '../types';
-import { ArrowLeft, Star, Heart, HelpCircle, Utensils, MessageSquare, Send, ThumbsUp, Coffee } from 'lucide-react';
+import { ArrowLeft, Star, Heart, HelpCircle, Utensils, MessageSquare, Send, ThumbsUp, Coffee, AlertCircle } from 'lucide-react';
 import { auth } from '../firebase';
 import { getUserProfile } from '../services/db';
 
 interface StudentPortalProps {
+  feedbackList?: StudentFeedback[];
   onAddFeedback: (feedback: StudentFeedback) => void;
   onBackToWelcome: () => void;
 }
 
-export default function StudentPortal({ onAddFeedback, onBackToWelcome }: StudentPortalProps) {
+export default function StudentPortal({ feedbackList = [], onAddFeedback, onBackToWelcome }: StudentPortalProps) {
   // We can let the student select which day's meal they are rating for full testability!
   const [selectedDayIndex, setSelectedDayIndex] = useState<number>(() => {
     const day = new Date().getDay(); // 0 is Sunday, 1 is Monday, ...
@@ -30,6 +31,12 @@ export default function StudentPortal({ onAddFeedback, onBackToWelcome }: Studen
   const [commentText, setCommentText] = useState<string>('');
   const [isSubmitted, setIsSubmitted] = useState<boolean>(false);
   const [studentName, setStudentName] = useState<string>('Anonymous Student');
+  const [onScreenError, setOnScreenError] = useState<string>('');
+
+  const todayDateStr = new Date().toISOString().split('T')[0];
+  const hasAlreadySubmittedToday = feedbackList.some(
+    f => f.studentName?.trim().toLowerCase() === studentName.trim().toLowerCase() && f.date === todayDateStr
+  );
 
   // Synchronize authenticated student's full name from Firestore
   useEffect(() => {
@@ -50,19 +57,49 @@ export default function StudentPortal({ onAddFeedback, onBackToWelcome }: Studen
 
 
   const handleSetItemRating = (item: string, stars: number) => {
+    setOnScreenError('');
     setItemRatings(prev => ({
       ...prev,
       [item]: stars
     }));
   };
 
+  const handleSetTasteRating = (stars: number) => { setTasteRating(stars); setOnScreenError(''); };
+  const handleSetQualityRating = (stars: number) => { setQualityRating(stars); setOnScreenError(''); };
+  const handleSetTempRating = (stars: number) => { setTempRating(stars); setOnScreenError(''); };
+  const handleSetBehaviourRating = (stars: number) => { setBehaviourRating(stars); setOnScreenError(''); };
+  const handleSetCleanlinessRating = (stars: number) => { setCleanlinessRating(stars); setOnScreenError(''); };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+
+    // Check if they left anything unrated
+    const unratedFoodItems = activeMenu.items.filter(item => !itemRatings[item] || itemRatings[item] === 0);
+    
+    // Check if any service ratings are zero
+    const unratedServices: string[] = [];
+    if (tasteRating === 0) unratedServices.push('Food Taste');
+    if (qualityRating === 0) unratedServices.push('Raw Quality');
+    if (tempRating === 0) unratedServices.push('Food Temperature');
+    if (behaviourRating === 0) unratedServices.push('Serving Behavior');
+    if (cleanlinessRating === 0) unratedServices.push('Cleanliness / Hygiene');
+
+    if (unratedFoodItems.length > 0 || unratedServices.length > 0) {
+      const errorParts: string[] = [];
+      if (unratedFoodItems.length > 0) {
+        errorParts.push(`Food Items [${unratedFoodItems.join(', ')}]`);
+      }
+      if (unratedServices.length > 0) {
+        errorParts.push(`Service aspects [${unratedServices.join(', ')}]`);
+      }
+      setOnScreenError(`Please rate everything! Left unrated: ${errorParts.join(' and ')}.`);
+      return;
+    }
 
     // Build the feedback object
     const ratingsObj: { [item: string]: number } = {};
     activeMenu.items.forEach(item => {
-      ratingsObj[item] = itemRatings[item] || 4; // default to 4 stars if they didn't touch it
+      ratingsObj[item] = itemRatings[item];
     });
 
     const newFeedback: StudentFeedback = {
@@ -71,17 +108,18 @@ export default function StudentPortal({ onAddFeedback, onBackToWelcome }: Studen
       studentName: studentName,
       itemRatings: ratingsObj,
       serviceRatings: {
-        taste: tasteRating || 4,
-        quality: qualityRating || 4,
-        temperature: tempRating || 4,
-        behaviour: behaviourRating || 5, // default polite
-        cleanliness: cleanlinessRating || 4
+        taste: tasteRating,
+        quality: qualityRating,
+        temperature: tempRating,
+        behaviour: behaviourRating,
+        cleanliness: cleanlinessRating
       },
       comments: commentText.trim()
     };
 
     onAddFeedback(newFeedback);
     setIsSubmitted(true);
+    setOnScreenError('');
 
     // Reset scores
     setTimeout(() => {
@@ -167,6 +205,26 @@ export default function StudentPortal({ onAddFeedback, onBackToWelcome }: Studen
             Jai Hind • Clean Andhra Pradesh Initiative
           </span>
         </div>
+      ) : hasAlreadySubmittedToday ? (
+        <div className="bg-amber-500/10 border border-amber-500/20 p-8 rounded-2xl flex flex-col items-center text-center space-y-4 animate-fade-in py-16">
+          <div className="w-16 h-16 bg-amber-500 text-white rounded-full flex items-center justify-center shadow-md">
+            <AlertCircle className="w-8 h-8 font-extrabold" />
+          </div>
+          <h3 className="text-2xl font-extrabold text-amber-600 tracking-tight">Feedback Already Received</h3>
+          <p className="text-sm text-on-surface-variant max-w-lg leading-relaxed">
+            Hello <strong className="text-primary font-bold">{studentName}</strong>, our live records show you have already submitted your meal rating feedback for today.
+          </p>
+          <p className="text-xs text-on-surface-variant/80 max-w-md">
+            To satisfy Mid-Day Meal daily auditing criteria and maintain system compliance, each student can submit exactly one review ticket per weekday. Please return tomorrow for your next hot lunch review!
+          </p>
+          <button
+            type="button"
+            onClick={onBackToWelcome}
+            className="px-5 py-2.5 bg-primary hover:bg-primary-hover text-white rounded-xl text-xs font-bold transition-all cursor-pointer shadow-sm"
+          >
+            Go Back to Portals
+          </button>
+        </div>
       ) : (
         <form onSubmit={handleSubmit} className="grid grid-cols-1 md:grid-cols-12 gap-6 items-start">
           
@@ -227,31 +285,31 @@ export default function StudentPortal({ onAddFeedback, onBackToWelcome }: Studen
                 {/* Taste */}
                 <div className="flex items-center justify-between gap-4">
                   <span className="text-xs font-semibold text-on-surface-variant">Food Taste</span>
-                  {renderStars(tasteRating, setTasteRating, 20)}
+                  {renderStars(tasteRating, handleSetTasteRating, 20)}
                 </div>
 
                 {/* Quality */}
                 <div className="flex items-center justify-between gap-4">
                   <span className="text-xs font-semibold text-on-surface-variant">Raw Quality</span>
-                  {renderStars(qualityRating, setQualityRating, 20)}
+                  {renderStars(qualityRating, handleSetQualityRating, 20)}
                 </div>
 
                 {/* Temp */}
                 <div className="flex items-center justify-between gap-4">
                   <span className="text-xs font-semibold text-on-surface-variant">Food Temperature</span>
-                  {renderStars(tempRating, setTempRating, 20)}
+                  {renderStars(tempRating, handleSetTempRating, 20)}
                 </div>
 
                 {/* Behaviour */}
                 <div className="flex items-center justify-between gap-4">
                   <span className="text-xs font-semibold text-on-surface-variant">Serving Behavior</span>
-                  {renderStars(behaviourRating, setBehaviourRating, 20)}
+                  {renderStars(behaviourRating, handleSetBehaviourRating, 20)}
                 </div>
 
                 {/* Cleanliness */}
                 <div className="flex items-center justify-between gap-4 col-span-1">
                   <span className="text-xs font-semibold text-on-surface-variant">Cleanliness / Hygiene</span>
-                  {renderStars(cleanlinessRating, setCleanlinessRating, 20)}
+                  {renderStars(cleanlinessRating, handleSetCleanlinessRating, 20)}
                 </div>
 
               </div>
@@ -271,6 +329,16 @@ export default function StudentPortal({ onAddFeedback, onBackToWelcome }: Studen
                 className="w-full bg-surface-container-low border border-outline-variant rounded-xl p-3 text-xs focus:ring-2 focus:ring-primary focus:outline-none transition-all"
               />
             </div>
+
+            {onScreenError && (
+              <div id="student-on-screen-alert" className="p-4 bg-red-50 text-red-700 rounded-2xl border border-red-200 text-xs font-bold flex items-start gap-2.5 animate-bounce">
+                <AlertCircle className="w-5 h-5 flex-shrink-0 text-red-600 mt-0.5" />
+                <div className="space-y-1">
+                  <p className="font-extrabold uppercase tracking-wider text-[10px] text-red-800">Incomplete Submission Alert</p>
+                  <p className="font-medium text-red-700 leading-normal">{onScreenError}</p>
+                </div>
+              </div>
+            )}
 
             {/* Submit Button */}
             <button 

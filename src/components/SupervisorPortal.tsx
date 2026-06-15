@@ -8,6 +8,7 @@ interface SupervisorPortalProps {
   onAddWastageReport: (report: DailyWastageReport) => void;
   onBackToWelcome: () => void;
   attendanceReports?: AttendanceReport[];
+  wastageReports?: DailyWastageReport[];
 }
 
 export default function SupervisorPortal({
@@ -15,7 +16,8 @@ export default function SupervisorPortal({
   totalStudentCount,
   onAddWastageReport,
   onBackToWelcome,
-  attendanceReports = []
+  attendanceReports = [],
+  wastageReports = []
 }: SupervisorPortalProps) {
   // Local state to override attendance count for testing/simulation
   const [overrideCount, setOverrideCount] = useState<number>(presentStudentCount || totalStudentCount || 150);
@@ -30,15 +32,17 @@ export default function SupervisorPortal({
     }
   }, [presentStudentCount, totalStudentCount]);
 
-  // Wastage Module Input Form State
-  const [ricePrep, setRicePrep] = useState<number>(130);
-  const [riceCons, setRiceCons] = useState<number>(122);
-  const [dalPrep, setDalPrep] = useState<number>(35);
-  const [dalCons, setDalCons] = useState<number>(34);
-  const [eggPrep, setEggPrep] = useState<number>(855);
-  const [eggCons, setEggCons] = useState<number>(850);
-  const [vegPrep, setVegPrep] = useState<number>(68);
-  const [vegCons, setVegCons] = useState<number>(58);
+  // Wastage date selector state - default to current local date
+  const [selectedDate, setSelectedDate] = useState<string>(() => {
+    const d = new Date();
+    const yr = d.getFullYear();
+    const mo = String(d.getMonth() + 1).padStart(2, '0');
+    const da = String(d.getDate()).padStart(2, '0');
+    return `${yr}-${mo}-${da}`;
+  });
+
+  // Dynamic Wastage Module Input Form State (initialized as empty strings for manual entry)
+  const [wastageInputs, setWastageInputs] = useState<{ [itemName: string]: { prepared: string; consumed: string } }>({});
 
   // Success indicator
   const [isSubmitSuccess, setIsSubmitSuccess] = useState<boolean>(false);
@@ -53,62 +57,132 @@ export default function SupervisorPortal({
   // Active Menu Day (for lookup menu view) - defaults to today's day index
   const [activeMenuIndex, setActiveMenuIndex] = useState<number>(todayDayIndex);
 
-  // Automatic calculation for ingredients based on active student count
-  const calcRiceReq = Math.round(overrideCount * 0.150); // 150g per student
-  const calcDalReq = Math.round(overrideCount * 0.040); // 40g per student
-  const calcEggReq = Math.round(overrideCount * 1.0); // 1 egg per student
-  const calcVegReq = Math.round(overrideCount * 0.080); // 80g per student
-  const calcChikkiReq = Math.round(overrideCount * 1.0); // 1 chikki per student
+  // Helper helper to get menu for any YYYY-MM-DD string cleanly
+  const getMenuForDate = (dateStr: string) => {
+    if (!dateStr) return WEEKLY_MENU[0];
+    const parts = dateStr.split('-');
+    if (parts.length === 3) {
+      const year = parseInt(parts[0], 10);
+      const month = parseInt(parts[1], 10) - 1;
+      const day = parseInt(parts[2], 10);
+      const dateObj = new Date(year, month, day);
+      const dayIndex = dateObj.getDay(); // 0 is Sunday, 1 is Monday...
+      const menuIndex = dayIndex === 0 ? 5 : dayIndex - 1; // Map Sunday to Saturday (5) or Monday (0) as closest school days
+      return WEEKLY_MENU[menuIndex] || WEEKLY_MENU[0];
+    }
+    return WEEKLY_MENU[0];
+  };
+
+  // Find menu of the selected date
+  const activeMenuForSelectedDate = getMenuForDate(selectedDate);
+
+  // Helper helper to get standard specs for any menu dish name dynamically
+  const getIngredientSpec = (itemName: string): { name: string; unit: 'kg' | 'units'; perCapitaQuantity: number } => {
+    const norm = itemName.toLowerCase();
+    if (norm.includes('rice') || norm.includes('pulihora') || norm.includes('khichdi')) {
+      return { name: itemName, unit: 'kg', perCapitaQuantity: 0.150 }; // 150g Rice
+    }
+    if (norm.includes('dal') || norm.includes('samber') || norm.includes('sambar') || norm.includes('kurma') || norm.includes('chutney')) {
+      if (norm.includes('dal') || norm.includes('sambar')) {
+        return { name: itemName, unit: 'kg', perCapitaQuantity: 0.040 }; // 40g Dal
+      }
+      return { name: itemName, unit: 'kg', perCapitaQuantity: 0.080 }; // 80g Vegetables
+    }
+    if (norm.includes('egg')) {
+      return { name: itemName, unit: 'units', perCapitaQuantity: 1.0 }; // 1 egg
+    }
+    if (norm.includes('chikki') || norm.includes('pongal')) {
+      return { name: itemName, unit: 'units', perCapitaQuantity: 1.0 }; // 1 unit
+    }
+    return { name: itemName, unit: 'kg', perCapitaQuantity: 0.050 };
+  };
 
   // Auto waste calculation inside supervisor's console
-  const itemsToCalc = [
-    { name: 'Rice', prep: ricePrep, cons: riceCons, unit: 'kg' },
-    { name: 'Dal', prep: dalPrep, cons: dalCons, unit: 'kg' },
-    { name: 'Eggs', prep: eggPrep, cons: eggCons, unit: 'units' },
-    { name: 'Vegetables', prep: vegPrep, cons: vegCons, unit: 'kg' }
-  ];
-
-  const processedWastageEntries: WastageEntry[] = itemsToCalc.map(item => {
-    const remaining = Math.max(0, item.prep - item.cons);
-    const percentage = item.prep > 0 ? (remaining / item.prep) * 100 : 0;
+  const processedWastageEntries: WastageEntry[] = activeMenuForSelectedDate.items.map(item => {
+    const inputVal = wastageInputs[item] || { prepared: '', consumed: '' };
+    const prep = parseFloat(inputVal.prepared) || 0;
+    const cons = parseFloat(inputVal.consumed) || 0;
+    const remaining = Math.max(0, prep - cons);
+    const percentage = prep > 0 ? (remaining / prep) * 100 : 0;
+    const spec = getIngredientSpec(item);
     return {
-      item: item.name,
-      prepared: item.prep,
-      consumed: item.cons,
+      item,
+      prepared: prep,
+      consumed: cons,
       remaining,
       wastePercentage: parseFloat(percentage.toFixed(2)),
-      unit: item.unit
+      unit: spec.unit
     };
   });
 
-  const avgWastagePercentage = parseFloat(
-    (processedWastageEntries.reduce((acc, curr) => acc + curr.wastePercentage, 0) / processedWastageEntries.length).toFixed(2)
-  );
+  const avgWastagePercentage = processedWastageEntries.length > 0
+    ? parseFloat(
+        (processedWastageEntries.reduce((acc, curr) => acc + curr.wastePercentage, 0) / processedWastageEntries.length).toFixed(2)
+      )
+    : 0;
 
-  // Find most wasted food item
-  const sortedWastedEntries = [...processedWastageEntries].sort((a, b) => b.remaining - a.remaining);
-  const mostWastedItem = sortedWastedEntries[0]?.item || 'None';
-  const mostWastedQty = sortedWastedEntries[0]?.remaining || 0;
-  const mostWastedPercentage = sortedWastedEntries[0]?.wastePercentage || 0;
+  // Find most wasted food item based on waste percentage to normalize across units (kg vs units)
+  const sortedWastedEntries = [...processedWastageEntries].sort((a, b) => b.wastePercentage - a.wastePercentage);
+  const mostWastedItem = sortedWastedEntries.length > 0 ? (sortedWastedEntries[0]?.item || 'None') : 'None';
+  const mostWastedQty = sortedWastedEntries.length > 0 ? (sortedWastedEntries[0]?.remaining || 0) : 0;
+  const mostWastedPercentage = sortedWastedEntries.length > 0 ? (sortedWastedEntries[0]?.wastePercentage || 0) : 0;
 
   // Meal required today calculation
   const mealsRequired = Math.round(overrideCount * (1 + bufferOption / 100));
 
+  const hasSubmittedSelectedDate = (wastageReports || []).some(r => r.date === selectedDate);
+
+  // Synchronize inputs when selectedDate or wastageReports update
+  useEffect(() => {
+    const matchedReport = (wastageReports || []).find(r => r.date === selectedDate);
+    const dayMenuOfSelectedDate = getMenuForDate(selectedDate);
+    
+    const initialInputs: { [key: string]: { prepared: string; consumed: string } } = {};
+    dayMenuOfSelectedDate.items.forEach(item => {
+      if (matchedReport) {
+        const itemMatch = matchedReport.items.find(
+          i => i.item.toLowerCase() === item.toLowerCase() ||
+               i.item.toLowerCase().includes(item.toLowerCase()) ||
+               item.toLowerCase().includes(i.item.toLowerCase())
+        );
+        initialInputs[item] = {
+          prepared: itemMatch ? String(itemMatch.prepared) : '0',
+          consumed: itemMatch ? String(itemMatch.consumed) : '0'
+        };
+      } else {
+        initialInputs[item] = {
+          prepared: '',
+          consumed: ''
+        };
+      }
+    });
+    setWastageInputs(initialInputs);
+  }, [selectedDate, wastageReports]);
+
   const handleResetForm = () => {
-    setRicePrep(Math.round(calcRiceReq * 1.05));
-    setRiceCons(calcRiceReq);
-    setDalPrep(Math.round(calcDalReq * 1.05));
-    setDalCons(calcDalReq);
-    setEggPrep(Math.round(calcEggReq * 1.1));
-    setEggCons(calcEggReq);
-    setVegPrep(Math.round(calcVegReq * 1.05));
-    setVegCons(calcVegReq);
+    const dayMenuOfSelectedDate = getMenuForDate(selectedDate);
+    const cleared: { [key: string]: { prepared: string; consumed: string } } = {};
+    dayMenuOfSelectedDate.items.forEach(item => {
+      cleared[item] = { prepared: '', consumed: '' };
+    });
+    setWastageInputs(cleared);
   };
 
   const handleSubmitWastage = () => {
+    const dayMenuOfSelectedDate = getMenuForDate(selectedDate);
+    const missingAny = dayMenuOfSelectedDate.items.some(item => {
+      const input = wastageInputs[item];
+      return !input || input.prepared === '' || input.consumed === '';
+    });
+
+    if (missingAny) {
+      alert("Please enter all Cooked (A) and Consumed (B) values manually before submitting daily wastage audit!");
+      return;
+    }
+
     const report: DailyWastageReport = {
       id: 'w-' + Date.now(),
-      date: new Date().toISOString().split('T')[0],
+      date: selectedDate,
       items: processedWastageEntries,
       avgWastePercentage: avgWastagePercentage,
       mostWastedItem,
@@ -121,18 +195,6 @@ export default function SupervisorPortal({
       setIsSubmitSuccess(false);
     }, 2500);
   };
-
-  // Synchronize initial input fields with the calculator as defaults
-  useEffect(() => {
-    setRicePrep(Math.round(calcRiceReq * 1.05));
-    setRiceCons(calcRiceReq);
-    setDalPrep(Math.round(calcDalReq * 1.05));
-    setDalCons(calcDalReq);
-    setEggPrep(Math.round(calcEggReq * 1.02));
-    setEggCons(calcEggReq);
-    setVegPrep(Math.round(calcVegReq * 1.05));
-    setVegCons(calcVegReq);
-  }, [overrideCount]);
 
   return (
     <div className="space-y-6">
@@ -355,57 +417,46 @@ export default function SupervisorPortal({
             <h3 className="font-headline-sm text-lg font-bold text-primary flex items-center gap-2">
               <span>Requirement Calculator</span>
             </h3>
-            <span className="text-[10px] text-on-surface-variant">Based on standard parameters per child</span>
+            <span className="text-[10px] text-on-surface-variant bg-primary-container/20 px-2 py-0.5 rounded text-primary font-semibold">
+              Includes active safety buffer ({mealsRequired} total plates calculated)
+            </span>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {/* Rice */}
-            <div className="p-4 bg-surface-container-low rounded-xl">
-              <span className="text-[10px] uppercase font-bold text-on-surface-variant block mb-1">Rice required</span>
-              <div className="flex items-baseline gap-1">
-                <span className="text-2xl font-extrabold text-primary font-mono">{calcRiceReq}</span>
-                <span className="text-xs text-on-surface-variant font-bold">kg</span>
-              </div>
-              <div className="mt-3 w-full bg-primary/10 h-1.5 rounded-full overflow-hidden">
-                <div className="bg-primary h-full rounded-full" style={{ width: '80%' }}></div>
-              </div>
-            </div>
+            {activeMenuForSelectedDate.items.map((item, idx) => {
+              const spec = getIngredientSpec(item);
+              const calculatedReq = Math.round(mealsRequired * spec.perCapitaQuantity);
+              
+              let accentColor = 'bg-primary';
+              let textColor = 'text-primary';
+              let progressBg = 'bg-primary/10';
+              if (idx === 1) {
+                accentColor = 'bg-secondary';
+                textColor = 'text-secondary';
+                progressBg = 'bg-secondary/10';
+              } else if (idx === 2) {
+                accentColor = 'bg-amber-600';
+                textColor = 'text-amber-700';
+                progressBg = 'bg-amber-100';
+              } else if (idx === 3) {
+                accentColor = 'bg-emerald-700';
+                textColor = 'text-emerald-800';
+                progressBg = 'bg-emerald-700/10';
+              }
 
-            {/* Dal */}
-            <div className="p-4 bg-surface-container-low rounded-xl">
-              <span className="text-[10px] uppercase font-bold text-on-surface-variant block mb-1">dal required</span>
-              <div className="flex items-baseline gap-1">
-                <span className="text-2xl font-extrabold text-secondary font-mono">{calcDalReq}</span>
-                <span className="text-xs text-on-surface-variant font-bold">kg</span>
-              </div>
-              <div className="mt-3 w-full bg-secondary/10 h-1.5 rounded-full overflow-hidden">
-                <div className="bg-secondary h-full rounded-full" style={{ width: '50%' }}></div>
-              </div>
-            </div>
-
-            {/* Eggs */}
-            <div className="p-4 bg-surface-container-low rounded-xl">
-              <span className="text-[10px] uppercase font-bold text-on-surface-variant block mb-1">Egg units</span>
-              <div className="flex items-baseline gap-1">
-                <span className="text-2xl font-extrabold text-tertiary font-mono">{calcEggReq}</span>
-                <span className="text-xs text-on-surface-variant font-bold">eggs</span>
-              </div>
-              <div className="mt-3 w-full bg-tertiary/15 h-1.5 rounded-full overflow-hidden">
-                <div className="bg-tertiary h-full rounded-full" style={{ width: '90%' }}></div>
-              </div>
-            </div>
-
-            {/* Vegetables */}
-            <div className="p-4 bg-surface-container-low rounded-xl">
-              <span className="text-[10px] uppercase font-bold text-on-surface-variant block mb-1">Vegetables volume</span>
-              <div className="flex items-baseline gap-1">
-                <span className="text-2xl font-extrabold text-emerald-800 font-mono">{calcVegReq}</span>
-                <span className="text-xs text-on-surface-variant font-bold">kg</span>
-              </div>
-              <div className="mt-3 w-full bg-emerald-800/10 h-1.5 rounded-full overflow-hidden">
-                <div className="bg-emerald-800 h-full rounded-full" style={{ width: '65%' }}></div>
-              </div>
-            </div>
+              return (
+                <div key={item} className="p-4 bg-surface-container-low rounded-xl">
+                  <span className="text-[10px] uppercase font-bold text-on-surface-variant block mb-1">{item} required</span>
+                  <div className="flex items-baseline gap-1">
+                    <span className={`text-2xl font-extrabold ${textColor} font-mono`}>{calculatedReq}</span>
+                    <span className="text-xs text-on-surface-variant font-bold">{spec.unit}</span>
+                  </div>
+                  <div className={`mt-3 w-full ${progressBg} h-1.5 rounded-full overflow-hidden`}>
+                    <div className={`${accentColor} h-full rounded-full`} style={{ width: `${Math.min(100, Math.max(15, 100 - (idx * 20)))}%` }}></div>
+                   </div>
+                </div>
+              );
+            })}
           </div>
 
           <div className="mt-6 p-4 bg-surface-container-low rounded-xl border border-outline-variant flex items-start gap-3">
@@ -419,9 +470,31 @@ export default function SupervisorPortal({
         {/* Wastage Report Submission Panel */}
         <div className="lg:col-span-5 bg-surface-container-lowest p-6 rounded-2xl border border-outline-variant shadow-xs flex flex-col justify-between">
           <div>
-            <div className="flex items-center justify-between mb-4 border-b border-outline-variant pb-3">
-              <h3 className="font-headline-sm text-lg font-bold text-red-600">Daily Wastage Module</h3>
-              <span className="text-xs text-red-600 font-bold uppercase tracking-wider bg-red-100 px-2 py-0.5 rounded">Audit</span>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-4 border-b border-outline-variant pb-3 gap-2">
+              <div className="space-y-0.5">
+                <h3 className="font-headline-sm text-lg font-bold text-red-600">Daily Wastage Module</h3>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[10px] uppercase font-mono text-on-surface-variant font-bold">Audit Date:</span>
+                  <input 
+                    type="date"
+                    value={selectedDate}
+                    onChange={e => setSelectedDate(e.target.value)}
+                    className="px-1.5 py-0.5 border border-outline-variant rounded font-semibold text-[10px] font-mono bg-white text-on-surface"
+                  />
+                </div>
+              </div>
+              <div className="flex items-center gap-1.5">
+                {hasSubmittedSelectedDate ? (
+                  <span className="text-[10px] bg-emerald-105 bg-emerald-100 text-emerald-800 font-extrabold uppercase tracking-wider px-2 py-0.5 rounded shadow-2xs">
+                    SUBMITTED
+                  </span>
+                ) : (
+                  <span className="text-[10px] bg-red-100 text-red-800 font-extrabold uppercase tracking-wider px-2 py-0.5 rounded shadow-2xs animate-pulse">
+                    PENDING
+                  </span>
+                )}
+                <span className="text-xs text-red-600 font-bold uppercase tracking-wider bg-red-100 px-2 py-0.5 rounded">Audit</span>
+              </div>
             </div>
 
             {/* Column captions explaining what the 2 input boxes represent */}
@@ -437,90 +510,47 @@ export default function SupervisorPortal({
 
             {/* Dynamic Ingredient inputs */}
             <div className="space-y-3.5">
-              {/* Rice entry row */}
-              <div className="grid grid-cols-12 gap-3 items-center">
-                <span className="col-span-4 text-xs font-bold text-on-surface-variant">Rice Prep (kg)</span>
-                <div className="col-span-4">
-                  <input 
-                    type="number" 
-                    value={ricePrep} 
-                    onChange={e => setRicePrep(Math.max(0, parseFloat(e.target.value) || 0))} 
-                    className="w-full bg-surface-container-low border border-outline-variant rounded px-2.5 py-1 text-xs font-semibold text-primary"
-                  />
-                </div>
-                <div className="col-span-4">
-                  <input 
-                    type="number" 
-                    value={riceCons} 
-                    onChange={e => setRiceCons(Math.max(0, parseFloat(e.target.value) || 0))} 
-                    placeholder="Cons"
-                    className="w-full bg-white border border-outline-variant rounded px-2.5 py-1 text-xs font-semibold text-secondary"
-                  />
-                </div>
-              </div>
-
-              {/* Dal entry row */}
-              <div className="grid grid-cols-12 gap-3 items-center">
-                <span className="col-span-4 text-xs font-bold text-on-surface-variant">Dal Prep (kg)</span>
-                <div className="col-span-4">
-                  <input 
-                    type="number" 
-                    value={dalPrep} 
-                    onChange={e => setDalPrep(Math.max(0, parseFloat(e.target.value) || 0))} 
-                    className="w-full bg-surface-container-low border border-outline-variant rounded px-2.5 py-1 text-xs font-semibold text-primary"
-                  />
-                </div>
-                <div className="col-span-4">
-                  <input 
-                    type="number" 
-                    value={dalCons} 
-                    onChange={e => setDalCons(Math.max(0, parseFloat(e.target.value) || 0))} 
-                    className="w-full bg-white border border-outline-variant rounded px-2.5 py-1 text-xs font-semibold text-secondary"
-                  />
-                </div>
-              </div>
-
-              {/* Egg entry row */}
-              <div className="grid grid-cols-12 gap-3 items-center">
-                <span className="col-span-4 text-xs font-bold text-on-surface-variant">Eggs (units)</span>
-                <div className="col-span-4">
-                  <input 
-                    type="number" 
-                    value={eggPrep} 
-                    onChange={e => setEggPrep(Math.max(0, parseFloat(e.target.value) || 0))} 
-                    className="w-full bg-surface-container-low border border-outline-variant rounded px-2.5 py-1 text-xs font-semibold text-primary"
-                  />
-                </div>
-                <div className="col-span-4">
-                  <input 
-                    type="number" 
-                    value={eggCons} 
-                    onChange={e => setEggCons(Math.max(0, parseFloat(e.target.value) || 0))} 
-                    className="w-full bg-white border border-outline-variant rounded px-2.5 py-1 text-xs font-semibold text-secondary"
-                  />
-                </div>
-              </div>
-
-              {/* Veg entry row */}
-              <div className="grid grid-cols-12 gap-3 items-center">
-                <span className="col-span-4 text-xs font-bold text-on-surface-variant">Vegetables (kg)</span>
-                <div className="col-span-4">
-                  <input 
-                    type="number" 
-                    value={vegPrep} 
-                    onChange={e => setVegPrep(Math.max(0, parseFloat(e.target.value) || 0))} 
-                    className="w-full bg-surface-container-low border border-outline-variant rounded px-2.5 py-1 text-xs font-semibold text-primary"
-                  />
-                </div>
-                <div className="col-span-4">
-                  <input 
-                    type="number" 
-                    value={vegCons} 
-                    onChange={e => setVegCons(Math.max(0, parseFloat(e.target.value) || 0))} 
-                    className="w-full bg-white border border-outline-variant rounded px-2.5 py-1 text-xs font-semibold text-secondary"
-                  />
-                </div>
-              </div>
+              {activeMenuForSelectedDate.items.map(item => {
+                const spec = getIngredientSpec(item);
+                const itemInput = wastageInputs[item] || { prepared: '', consumed: '' };
+                return (
+                  <div key={item} className="grid grid-cols-12 gap-3 items-center">
+                    <span className="col-span-4 text-xs font-bold text-on-surface-variant truncate" title={`${item} (${spec.unit})`}>
+                      {item} ({spec.unit})
+                    </span>
+                    <div className="col-span-4">
+                      <input 
+                        type="number" 
+                        value={itemInput.prepared} 
+                        onChange={e => {
+                          setWastageInputs(prev => ({
+                            ...prev,
+                            [item]: { ...prev[item], prepared: e.target.value }
+                          }));
+                        }} 
+                        placeholder={`Cooked ${spec.unit}`}
+                        disabled={hasSubmittedSelectedDate}
+                        className="w-full bg-surface-container-low border border-outline-variant rounded px-2.5 py-1 text-xs font-semibold text-primary disabled:opacity-75 disabled:cursor-not-allowed"
+                      />
+                    </div>
+                    <div className="col-span-4">
+                      <input 
+                        type="number" 
+                        value={itemInput.consumed} 
+                        onChange={e => {
+                          setWastageInputs(prev => ({
+                            ...prev,
+                            [item]: { ...prev[item], consumed: e.target.value }
+                          }));
+                        }} 
+                        placeholder={`Consumed ${spec.unit}`}
+                        disabled={hasSubmittedSelectedDate}
+                        className="w-full bg-white border border-outline-variant rounded px-2.5 py-1 text-xs font-semibold text-secondary disabled:opacity-75 disabled:cursor-not-allowed"
+                      />
+                    </div>
+                  </div>
+                );
+              })}
             </div>
 
             {/* Calculations summaries */}
@@ -545,17 +575,24 @@ export default function SupervisorPortal({
           <div className="pt-4">
             <button 
               onClick={handleSubmitWastage}
-              disabled={isSubmitSuccess}
-              className={`w-full py-2.5 rounded-lg text-sm font-extrabold flex items-center justify-center gap-2 transition-all cursor-pointer ${
+              disabled={isSubmitSuccess || hasSubmittedSelectedDate}
+              className={`w-full py-2.5 rounded-lg text-sm font-extrabold flex items-center justify-center gap-2 transition-all ${
                 isSubmitSuccess 
                   ? 'bg-secondary text-white' 
-                  : 'bg-primary hover:bg-primary-hover text-white shadow-xs'
+                  : hasSubmittedSelectedDate
+                    ? 'bg-slate-300 text-slate-500 border border-slate-300 cursor-not-allowed'
+                    : 'bg-primary hover:bg-primary-hover text-white shadow-xs cursor-pointer'
               }`}
             >
               {isSubmitSuccess ? (
                 <>
                   <Check className="w-4 h-4" />
                   Wastage Saved! Updated Admin Charts
+                </>
+              ) : hasSubmittedSelectedDate ? (
+                <>
+                  <Check className="w-4 h-4 text-emerald-600 animate-bounce" />
+                  Report Submitted
                 </>
               ) : (
                 <>
