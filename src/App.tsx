@@ -287,7 +287,7 @@ export default function App() {
         
         {/* Render active portal context */}
         {activeRole === 'welcome' && (
-          <WelcomePortal onSelectRole={setActiveRole} onLogout={handlePortalExit} />
+          <WelcomePortal onSelectRole={setActiveRole} />
         )}
 
         {activeRole === 'teacher' && (
