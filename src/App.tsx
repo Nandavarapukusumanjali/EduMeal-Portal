@@ -23,10 +23,21 @@ import {
   seedDatabaseIfEmpty
 } from './services/db';
 import { logoutUser } from './services/auth';
+import { subscribeToCriticalErrors } from './firebase';
 
 export default function App() {
   // Global Role Portal Management
   const [activeRole, setActiveRole] = useState<Role | 'welcome'>('welcome');
+  const [quotaExceeded, setQuotaExceeded] = useState(false);
+
+  useEffect(() => {
+    const unsubscribe = subscribeToCriticalErrors((_msg, isQuota) => {
+      if (isQuota) {
+        setQuotaExceeded(true);
+      }
+    });
+    return unsubscribe;
+  }, []);
 
   const handlePortalExit = async () => {
     try {
@@ -63,11 +74,13 @@ export default function App() {
 
     // Seeding attempt on portal entrance (handles checks gracefully per user permissions)
     const runSeeder = async () => {
+      /* 
       try {
         await seedDatabaseIfEmpty();
       } catch (err) {
         console.warn('Seeding skipped:', err);
       }
+      */
     };
     runSeeder();
 
@@ -285,6 +298,26 @@ export default function App() {
       {/* Main Content Layout Block */}
       <main className={`flex-1 ${activeRole !== 'welcome' ? 'pt-24 pb-12 px-6 max-w-[1440px] mx-auto w-full' : ''}`}>
         
+        {/* Quota Exceeded Warning Banner */}
+        {quotaExceeded && (
+          <div id="quota-exceeded-banner" className="mb-6 bg-amber-50 border border-amber-200 text-amber-900 p-4 rounded-xl shadow-sm flex flex-col md:flex-row items-center justify-between gap-4 text-xs md:text-sm font-medium">
+            <div className="flex items-center gap-3">
+              <span className="text-xl flex-shrink-0">⚠️</span>
+              <span>
+                <strong>Firestore Free Daily Quota Exceeded:</strong> The daily reads limit has been reached on the free database tier. The app has automatically enabled <strong>offline fallback (local persistent cache)</strong> so all features continue to operate fully.
+              </span>
+            </div>
+            <a
+              href="https://console.firebase.google.com/project/gen-lang-client-0904883411/firestore/databases/ai-studio-92c33332-b704-4ac0-a376-ace252afe33d/data?openUpgradeDialog=true"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="whitespace-nowrap bg-amber-600 hover:bg-amber-700 text-white font-extrabold px-3.5 py-1.5 rounded-lg text-xs shadow-sm transition-colors flex items-center gap-1 cursor-pointer"
+            >
+              Upgrade & Reset Quotas ↗
+            </a>
+          </div>
+        )}
+
         {/* Render active portal context */}
         {activeRole === 'welcome' && (
           <WelcomePortal onSelectRole={setActiveRole} />
@@ -335,9 +368,18 @@ export default function App() {
 
       {/* Persisted State operational status indicator (Floating bottom badge) */}
       {activeRole !== 'welcome' && (
-        <div className="fixed bottom-3 right-3 bg-white/95 backdrop-blur-xs text-on-surface border border-outline-variant p-2 rounded-xl text-[10px] shadow-sm flex items-center gap-2 select-none z-50">
-          <Info className="w-3.5 h-3.5 text-secondary" />
-          <span>Operational Live Sync: <strong>Connected</strong></span>
+        <div id="status-badge" className="fixed bottom-3 right-3 bg-white/95 backdrop-blur-xs text-on-surface border border-outline-variant p-2 rounded-xl text-[10px] shadow-sm flex items-center gap-2 select-none z-50">
+          {quotaExceeded ? (
+            <>
+              <div className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+              <span>Database Status: <strong className="text-amber-600 font-bold">Offline Fallback Active</strong></span>
+            </>
+          ) : (
+            <>
+              <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+              <span>Operational Live Sync: <strong className="text-emerald-600 font-bold">Connected</strong></span>
+            </>
+          )}
         </div>
       )}
 

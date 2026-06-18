@@ -42,6 +42,27 @@ export interface FirestoreErrorInfo {
   };
 }
 
+// Shared listeners list to notify UI on critical errors
+type ErrorListener = (message: string, isQuota: boolean) => void;
+const errorListeners = new Set<ErrorListener>();
+
+export function subscribeToCriticalErrors(listener: ErrorListener) {
+  errorListeners.add(listener);
+  return () => {
+    errorListeners.delete(listener);
+  };
+}
+
+export function notifyCriticalError(msg: string, isQuota: boolean) {
+  errorListeners.forEach(listener => {
+    try {
+      listener(msg, isQuota);
+    } catch (e) {
+      console.error('Error in critical error listener:', e);
+    }
+  });
+}
+
 export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
   const errMessage = error instanceof Error ? error.message : String(error);
   const errCode = (error as any)?.code;
@@ -63,12 +84,24 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
     operationType,
     path
   };
+
+  const isQuotaExceeded = errCode === 'resource-exhausted' || 
+                          errMessage.toLowerCase().includes('quota') || 
+                          errMessage.toLowerCase().includes('exceeded') || 
+                          errMessage.toLowerCase().includes('limit');
+
+  if (isQuotaExceeded) {
+    notifyCriticalError(errMessage, true);
+    // Silent handling for quota issues to avoid console noise
+    return; // Don't throw to prevent app crash
+  }
   
   console.warn('Firestore Warning/Error info: ', JSON.stringify(errInfo));
 
+
   // If Firestore is offline or unavailable, prevent crashing the app.
   // Allow the client to work seamlessly in offline mode using the local persistent cache.
-  if (errCode === 'unavailable' || errMessage.toLowerCase().includes('unavailable') || errMessage.toLowerCase().includes('could not reach')) {
+  if (errCode === 'unavailable' || errMessage.toLowerCase().includes('unavailable') || errMessage.toLowerCase().includes('could not reach') || errMessage.toLowerCase().includes('offline')) {
     console.warn(`Firestore is operating in local/offline mode gracefully.`);
     return;
   }
@@ -84,7 +117,15 @@ async function testConnection() {
   } catch (error) {
     const errMessage = error instanceof Error ? error.message : String(error);
     const errCode = (error as any)?.code;
-    if (errCode === 'unavailable' || errMessage.toLowerCase().includes('offline') || errMessage.toLowerCase().includes('could not reach')) {
+    const isQuotaExceeded = errCode === 'resource-exhausted' || 
+                            errMessage.toLowerCase().includes('quota') || 
+                            errMessage.toLowerCase().includes('exceeded') || 
+                            errMessage.toLowerCase().includes('limit');
+                            
+    if (isQuotaExceeded) {
+      notifyCriticalError(errMessage, true);
+      console.error("Firestore connection failure due to Quota Exceeded:", error);
+    } else if (errCode === 'unavailable' || errMessage.toLowerCase().includes('offline') || errMessage.toLowerCase().includes('could not reach')) {
       console.warn("Firestore Notice: Client is operating in offline mode. Local persistent cache is active.");
     } else {
       console.error("Firestore test connection error:", error);
@@ -92,4 +133,4 @@ async function testConnection() {
   }
 }
 
-testConnection();
+// testConnection();

@@ -66,10 +66,7 @@ export default function AdminPortal({
 
   // --- Dynamic Dashboard Metrics ---
   const totalStudents = students.length;
-  const presentToday = totalStudents > 0 ? (presentCountToday || students.filter(s => s.present).length) : 0;
-  const absentToday = totalStudents > 0 ? (totalStudents - presentToday) : 0;
-  const attendanceRatio = totalStudents > 0 ? parseFloat(((presentToday / totalStudents) * 100).toFixed(1)) : 0;
-
+  
   // Let's grab the wastage report for the selected audit date
   const selectedWastage = wastageReports.find(r => r.date === selectedDate);
   const isWastagePending = !selectedWastage;
@@ -88,13 +85,23 @@ export default function AdminPortal({
   const totalSubmissionsOnSelectedDate = feedbacksForSelectedDate.length;
 
   const matchingAttendance = attendanceReports.filter(r => r.date === selectedDate);
+  const isAttendancePending = matchingAttendance.length === 0;
   const totalPresentOnSelectedDate = matchingAttendance.length > 0
     ? matchingAttendance.reduce((acc, curr) => acc + curr.totalPresent, 0)
-    : (selectedDate === new Date().toISOString().split('T')[0] ? presentToday : null);
+    : 0;
+  const totalEnrolledOnSelectedDate = matchingAttendance.length > 0
+    ? matchingAttendance.reduce((acc, curr) => acc + curr.totalStudents, 0)
+    : totalStudents; // Fallback to current students
+    
+  const attendanceRatio = totalEnrolledOnSelectedDate > 0 
+    ? parseFloat(((totalPresentOnSelectedDate / totalEnrolledOnSelectedDate) * 100).toFixed(1)) 
+    : 0;
 
-  const presentCountForRatingRatio = totalPresentOnSelectedDate !== null && totalPresentOnSelectedDate > 0
+  const presentToday = totalPresentOnSelectedDate;
+
+  const presentCountForRatingRatio = totalPresentOnSelectedDate > 0
     ? totalPresentOnSelectedDate
-    : (presentToday > 0 ? presentToday : 150);
+    : (presentCountToday > 0 ? presentCountToday : 150);
 
   const isRatingPending = totalSubmissionsOnSelectedDate === 0;
 
@@ -195,7 +202,7 @@ export default function AdminPortal({
     // Fallback: estimate based on enrolled count
     const days = Math.max(1, weeklyWastageReports.length);
     weeklyTotalEnrolled = totalStudents * days;
-    weeklyTotalPresent = (totalPresentOnSelectedDate || presentToday || Math.round(totalStudents * 0.85)) * days;
+    weeklyTotalPresent = (totalPresentOnSelectedDate || presentCountToday || Math.round(totalStudents * 0.85)) * days;
   }
   const weeklyAttendanceRatio = weeklyTotalEnrolled > 0 ? parseFloat(((weeklyTotalPresent / weeklyTotalEnrolled) * 100).toFixed(1)) : 0;
 
@@ -249,7 +256,7 @@ export default function AdminPortal({
   } else {
     const days = Math.max(1, monthlyWastageReports.length);
     monthlyTotalEnrolled = totalStudents * days;
-    monthlyTotalPresent = (totalPresentOnSelectedDate || presentToday || Math.round(totalStudents * 0.85)) * days;
+    monthlyTotalPresent = (totalPresentOnSelectedDate || presentCountToday || Math.round(totalStudents * 0.85)) * days;
   }
   const monthlyAttendanceRatio = monthlyTotalEnrolled > 0 ? parseFloat(((monthlyTotalPresent / monthlyTotalEnrolled) * 100).toFixed(1)) : 0;
 
@@ -448,7 +455,7 @@ export default function AdminPortal({
     setExportSuccessType(type);
   };
 
-  // --- Smart Predictive Analytics & Menu Performance Logic ---
+  // --- Smart Predictive Analytics & Menu Performance Logic (Weekly Scope) ---
   const sanitizeName = (name: string): string => {
     const n = name.trim().toLowerCase();
     if (n.includes('egg')) return 'Egg Curry';
@@ -460,12 +467,12 @@ export default function AdminPortal({
     return name;
   };
 
-  // Discover all foods STRICTLY from actual previous database records (feedbacks and wastage reports)
   const discoveredItems = new Set<string>();
-  feedbackList.forEach(f => {
+  // Discover items from full history
+  (feedbackList || []).forEach(f => {
     Object.keys(f.itemRatings).forEach(it => discoveredItems.add(sanitizeName(it)));
   });
-  wastageReports.forEach(r => {
+  (wastageReports || []).forEach(r => {
     r.items.forEach(it => discoveredItems.add(sanitizeName(it.item)));
   });
 
@@ -474,8 +481,8 @@ export default function AdminPortal({
     dynamicItemPerformanceMap[item] = { ratings: [], wastePercentages: [] };
   });
 
-  // Populate dynamic item ratings
-  feedbackList.forEach(f => {
+  // Populate dynamic item ratings using full history
+  (feedbackList || []).forEach(f => {
     Object.entries(f.itemRatings).forEach(([item, rating]) => {
       const standardized = sanitizeName(item);
       if (dynamicItemPerformanceMap[standardized]) {
@@ -484,8 +491,8 @@ export default function AdminPortal({
     });
   });
 
-  // Populate dynamic wastage percentages
-  wastageReports.forEach(r => {
+  // Populate dynamic wastage percentages using full history
+  (wastageReports || []).forEach(r => {
     r.items.forEach(it => {
       const standardized = sanitizeName(it.item);
       if (dynamicItemPerformanceMap[standardized]) {
@@ -493,6 +500,7 @@ export default function AdminPortal({
       }
     });
   });
+
 
   const finalPerformanceList = Object.entries(dynamicItemPerformanceMap).map(([name, data]) => {
     const hasRatings = data.ratings.length > 0;
@@ -732,12 +740,16 @@ export default function AdminPortal({
         <div className="bg-surface-container-lowest p-5 rounded-2xl shadow-xs border-l-4 border-primary">
           <p className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">Attendance %</p>
           <div className="flex items-baseline gap-2 mt-2">
-            <span className="text-2xl md:text-3xl font-extrabold text-primary font-mono">{attendanceRatio}%</span>
-            <span className="text-xs text-secondary font-mono font-bold">
-              ({presentToday}/{totalStudents})
-            </span>
+            <span className="text-2xl md:text-3xl font-extrabold text-primary font-mono">{isAttendancePending ? 'Pending' : `${attendanceRatio}%`}</span>
+            {!isAttendancePending && (
+              <span className="text-xs text-secondary font-mono font-bold">
+                ({totalPresentOnSelectedDate}/{totalEnrolledOnSelectedDate})
+              </span>
+            )}
           </div>
-          <p className="text-[10px] text-on-surface-variant font-light mt-1.5">{presentToday} of {totalStudents} Present Today</p>
+          <p className="text-[10px] text-on-surface-variant font-light mt-1.5">
+            {isAttendancePending ? 'Attendance not posted yet' : `${totalPresentOnSelectedDate} of ${totalEnrolledOnSelectedDate} Present`}
+          </p>
         </div>
 
         {/* Total meal preparation prepared card */}
@@ -1600,13 +1612,12 @@ export default function AdminPortal({
           </div>
           
           <div className="space-y-4 max-h-[500px] overflow-y-auto custom-scrollbar pr-2">
-            {feedbacksForSelectedDate.length === 0 ? (
+            {[...feedbackList].filter(f => f.date === selectedDate).sort((a, b) => b.date.localeCompare(a.date)).length === 0 ? (
               <div className="py-12 flex flex-col items-center justify-center text-center">
-                <p className="text-[11px] font-bold text-slate-500 font-mono uppercase tracking-wider">No feedbacks registered for this audit date</p>
-                <p className="text-[10px] text-on-surface-variant font-light mt-1 max-w-sm">No students have filed meal rating tickets on {selectedDate}. Submissions will appear live immediately as they are entered.</p>
+                <p className="text-[11px] font-bold text-slate-500 font-mono uppercase tracking-wider">No feedbacks registered</p>
               </div>
             ) : (
-              feedbacksForSelectedDate.map((f, idx) => (
+              [...feedbackList].filter(f => f.date === selectedDate).sort((a, b) => b.date.localeCompare(a.date)).map((f, idx) => (
                 <div key={f.id || idx} className="p-4 bg-surface-container-low rounded-xl border border-outline-variant space-y-3">
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <span className="text-xs font-bold text-primary uppercase bg-primary-container/10 px-2.5 py-1 rounded">

@@ -88,6 +88,10 @@ export async function authenticateRole(
     ) {
       throw new Error('Invalid username or PIN. Please verify your credentials or register a new account.');
     }
+
+    if (String(error.message || error).toLowerCase().includes('quota') || String(error.message || error).toLowerCase().includes('resource-exhausted')) {
+      throw new Error('Our database service is temporarily limited due to high demand. Please try logging in again in a few minutes.');
+    }
     
     throw new Error(error.message || 'Authorization failed. Please check your credentials.');
   }

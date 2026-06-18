@@ -38,7 +38,7 @@ export async function getUserProfile(uid: string): Promise<UserProfile | null> {
     return null;
   } catch (error) {
     handleFirestoreError(error, OperationType.GET, path);
-    return null;
+    throw error;
   }
 }
 

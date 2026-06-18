@@ -21,18 +21,23 @@ export default function SupervisorPortal({
   wastageReports = [],
   students = []
 }: SupervisorPortalProps) {
+  const todayStr = new Date().toISOString().split('T')[0];
+  const isAttendancePosted = attendanceReports.some(r => r.date === todayStr);
+
   // Local state to override attendance count for testing/simulation
   const [overrideCount, setOverrideCount] = useState<number>(presentStudentCount || totalStudentCount || 150);
   const [bufferOption, setBufferOption] = useState<number>(1.5); // percentage buffer
 
   // Sync overrideCount with prop when it updates
   useEffect(() => {
-    if (presentStudentCount > 0) {
-      setOverrideCount(presentStudentCount);
-    } else if (totalStudentCount > 0 && (overrideCount === 0 || overrideCount === presentStudentCount)) {
-      setOverrideCount(presentStudentCount || totalStudentCount);
+    if (isAttendancePosted) { // Only sync if attendance is posted
+      if (presentStudentCount > 0) {
+        setOverrideCount(presentStudentCount);
+      } else if (totalStudentCount > 0 && (overrideCount === 0 || overrideCount === presentStudentCount)) {
+        setOverrideCount(presentStudentCount || totalStudentCount);
+      }
     }
-  }, [presentStudentCount, totalStudentCount]);
+  }, [presentStudentCount, totalStudentCount, isAttendancePosted]);
 
   // Wastage date selector state - default to current local date
   const [selectedDate, setSelectedDate] = useState<string>(() => {
@@ -260,9 +265,9 @@ export default function SupervisorPortal({
         <div className="bg-surface-container-lowest p-6 rounded-2xl shadow-xs border-l-4 border-primary flex items-center justify-between">
           <div>
             <p className="text-on-surface-variant text-xs font-bold uppercase tracking-wider">Total Present Today</p>
-            <h2 className="text-3xl font-extrabold text-primary mt-1">{overrideCount}</h2>
+            <h2 className="text-3xl font-extrabold text-primary mt-1">{isAttendancePosted ? overrideCount : 'Pending'}</h2>
             <p className="text-xs text-secondary mt-1 flex items-center gap-1">
-              • Simulated count of students to feed
+              • {isAttendancePosted ? 'Simulated count of students to feed' : 'Waiting for attendance post'}
             </p>
           </div>
           <div className="w-12 h-12 bg-primary/10 rounded-full flex items-center justify-center text-primary">
@@ -274,13 +279,14 @@ export default function SupervisorPortal({
         <div className="bg-surface-container-lowest p-6 rounded-2xl shadow-xs border-l-4 border-secondary flex items-center justify-between">
           <div>
             <p className="text-on-surface-variant text-xs font-bold uppercase tracking-wider">Required Plates</p>
-            <h2 className="text-3xl font-extrabold text-secondary mt-1">{mealsRequired}</h2>
+            <h2 className="text-3xl font-extrabold text-secondary mt-1">{isAttendancePosted ? mealsRequired : 'Pending'}</h2>
             <div className="text-[10px] text-on-surface-variant mt-1.5 flex items-center gap-2">
               <span>Buffer allocation:</span>
               <select 
                 value={bufferOption} 
                 onChange={e => setBufferOption(parseFloat(e.target.value) || 0)}
                 className="bg-surface-container border-none px-1 py-0.5 rounded text-[10px] font-bold text-secondary"
+                disabled={!isAttendancePosted}
               >
                 <option value="0">0.0% (Exact)</option>
                 <option value="1.5">1.5% Buffer</option>
@@ -468,7 +474,7 @@ export default function SupervisorPortal({
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             {activeMenuForSelectedDate.items.map((item, idx) => {
               const spec = getIngredientSpec(item);
-              const calculatedReq = Math.round(mealsRequired * spec.perCapitaQuantity);
+              const calculatedReq = isAttendancePosted ? Math.round(mealsRequired * spec.perCapitaQuantity) : 0;
               
               let accentColor = 'bg-primary';
               let textColor = 'text-primary';
