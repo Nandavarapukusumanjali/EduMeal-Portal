@@ -1,4 +1,50 @@
-export type Role = 'student' | 'teacher' | 'supervisor' | 'admin';
+export type Role = 'student' | 'teacher' | 'supervisor' | 'admin' | 'coordinator';
+
+export interface UserProfile {
+  uid: string;
+  email: string;
+  name: string;
+  role: Role;
+  status?: 'active' | 'inactive' | 'rejected';
+  first_login?: boolean;
+  dob?: string;
+  created_by?: string;
+  approved_by?: string;
+  approved_at?: string;
+  updated_at?: string;
+  assigned_class?: string;
+  assigned_section?: string;
+  subject?: string;
+  class?: string;
+  section?: string;
+  roll_number?: string;
+  password_pin?: string;
+  createdAt: string;
+}
+
+export interface ApprovalRequest {
+  request_id: string;
+  request_type: 'create_teacher' | 'create_supervisor' | 'create_student' | 'bulk_students' | 'assign_teacher' | 'transfer_student' | 'deactivate_user' | 'delete_user' | 'other';
+  requested_by: string; // coordinator username / name
+  requested_by_uid: string;
+  request_data: any;
+  status: 'pending' | 'approved' | 'rejected';
+  principal_remarks?: string;
+  approved_by?: string;
+  approved_by_uid?: string;
+  approved_at?: string;
+  createdAt: string;
+}
+
+export interface AuditLog {
+  log_id: string;
+  user_id: string; // uid or username
+  user_name: string;
+  role: string;
+  action: string;
+  timestamp: string;
+  remarks?: string;
+}
 
 export interface Student {
   id: string;
@@ -8,6 +54,24 @@ export interface Student {
   section: string;
   gender: 'Male' | 'Female';
   present: boolean;
+  dob?: string;
+}
+
+export interface TimetableEntry {
+  timetable_id: string;
+  teacher_id: string;
+  subject: string;
+  class: string;
+  section: string;
+  day_of_week: 'Monday' | 'Tuesday' | 'Wednesday' | 'Thursday' | 'Friday' | 'Saturday';
+  period_number: number;
+  start_time: string; // HH:mm
+  end_time: string; // HH:mm
+  status: 'Pending Approval' | 'Approved';
+  created_by: string;
+  approved_by?: string;
+  approved_at?: string;
+  updated_at: string;
 }
 
 export interface MealItem {

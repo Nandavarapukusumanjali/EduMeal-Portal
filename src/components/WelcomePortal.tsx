@@ -75,20 +75,20 @@ export default function WelcomePortal({ onSelectRole }: WelcomePortalProps) {
     switch (selectedGateRole) {
       case 'student':
         return {
-          title: isSignUpMode ? 'Student Feedback Registration' : 'Student Feedback Login',
-          subtitle: isSignUpMode ? 'Register your name and access code to join the mid-day meal rating app.' : 'Verify your access code to view menu cards and submit rating feedbacks.',
+          title: 'Student Attendance Feedback',
+          subtitle: 'Use your Roll Number and Date of Birth (YYYY-MM-DD) to access your attendance profile.',
           themeColor: 'border-primary text-primary bg-primary/5',
           bannerColor: 'bg-primary',
           icon: <BookOpen className="w-6 h-6" />,
-          userLabel: 'Student Full Name',
-          passwordLabel: 'Student Access Code (PIN)',
-          passwordPlaceholder: 'Choose a PIN (e.g. 2026)',
-          userPlaceholder: 'e.g., Rajesh Kumar'
+          userLabel: 'Student Roll Number',
+          passwordLabel: 'Security PIN (DOB)',
+          passwordPlaceholder: 'e.g., 2012-05-15',
+          userPlaceholder: 'e.g., 701'
         };
       case 'teacher':
         return {
-          title: isSignUpMode ? 'Classroom Teacher Registration' : 'Classroom Teacher Login',
-          subtitle: isSignUpMode ? 'Register a teacher account to manage classroom registries and report daily attendance.' : 'Authorized registrar flow to manage class students and report daily attendance.',
+          title: isSignUpMode ? 'Classroom Teacher Registration' : 'Teacher Attendance Portal',
+          subtitle: isSignUpMode ? 'Register a teacher account to manage classroom registries.' : 'Authorized portal for managing class students and daily attendance reports.',
           themeColor: 'border-secondary text-secondary bg-secondary/5',
           bannerColor: 'bg-secondary',
           icon: <Users className="w-6 h-6" />,
@@ -99,20 +99,20 @@ export default function WelcomePortal({ onSelectRole }: WelcomePortalProps) {
         };
       case 'supervisor':
         return {
-          title: isSignUpMode ? 'Kitchen Supervisor Registration' : 'Kitchen Operations Gate',
-          subtitle: isSignUpMode ? 'Register a supervisor account to review attendance, weekly menus and report wastage.' : 'Verify kitchen credentials to review attendance count and report wastage audit volumes.',
-          themeColor: 'border-tertiary text-tertiary bg-tertiary/5',
-          bannerColor: 'bg-tertiary',
-          icon: <Utensils className="w-6 h-6" />,
+          title: isSignUpMode ? 'Supervisor Registration' : 'Supervisor Audits & Monitoring',
+          subtitle: isSignUpMode ? 'Register a supervisor account for audits.' : 'Dashboard for monitoring food wastage, preparation audits, and school health records.',
+          themeColor: 'border-emerald-600 text-emerald-600 bg-emerald-50',
+          bannerColor: 'bg-emerald-700',
+          icon: <Shield className="w-6 h-6" />,
           userLabel: 'Supervisor Username',
           passwordLabel: 'Security PIN',
-          passwordPlaceholder: 'Choose a PIN (e.g. 1234)',
-          userPlaceholder: 'e.g., kitchen'
+          passwordPlaceholder: 'Choose a PIN',
+          userPlaceholder: 'e.g., supervisor'
         };
       case 'admin':
         return {
-          title: isSignUpMode ? 'Administration Registration' : 'Headmaster & Administration',
-          subtitle: isSignUpMode ? 'Register an administrator account to view consolidated school audits.' : 'Secure state node to view consolidated analytics, recommendation feeds, and audit logs.',
+          title: isSignUpMode ? 'Admin Registration' : 'System Administration & Settings',
+          subtitle: isSignUpMode ? 'Register a system admin.' : 'Full access portal for system-level configurations, audit logging, and principal approval workflows.',
           themeColor: 'border-red-600 text-red-600 bg-red-50',
           bannerColor: 'bg-red-700',
           icon: <GraduationCap className="w-6 h-6" />,
@@ -120,6 +120,18 @@ export default function WelcomePortal({ onSelectRole }: WelcomePortalProps) {
           passwordLabel: 'Admin Password',
           passwordPlaceholder: 'Choose a password (e.g. 1234)',
           userPlaceholder: 'e.g., admin'
+        };
+      case 'coordinator':
+        return {
+          title: 'Coordinator Registry & Setup',
+          subtitle: 'Administrative control panel for managing class assignments, student transfers, and system configurations.',
+          themeColor: 'border-amber-600 text-amber-600 bg-amber-50',
+          bannerColor: 'bg-amber-700',
+          icon: <Radio className="w-6 h-6" />,
+          userLabel: 'Coordinator Username',
+          passwordLabel: 'Security PIN',
+          passwordPlaceholder: 'Choose a PIN',
+          userPlaceholder: 'e.g., coord_north'
         };
       default:
         return null;
@@ -261,13 +273,32 @@ export default function WelcomePortal({ onSelectRole }: WelcomePortalProps) {
                   <div className="w-12 h-12 rounded-xl bg-red-100 flex items-center justify-center text-red-700 group-hover:bg-red-700 group-hover:text-white transition-colors mb-4">
                     <GraduationCap className="w-6 h-6" />
                   </div>
-                  <h4 className="font-headline-sm text-lg font-bold text-red-700 mb-2">Headmaster & Administration</h4>
+                  <h4 className="font-headline-sm text-lg font-bold text-red-700 mb-2 font-headline-md">Principal (Headmaster)</h4>
                   <p className="text-sm text-on-surface-variant font-light leading-relaxed mb-6">
-                    Inspect consolidated audits, inspect real-time wastage curves, check smart insights recommendation logs, and download compliance reports.
+                    Inspect consolidated audits, approve coordinator proposals, review real-time wastage, and download official compliance sheets.
                   </p>
                 </div>
                 <button className="w-full bg-red-700 text-white font-semibold text-sm py-2.5 rounded-lg hover:bg-red-800 shadow-sm transition-all focus:ring-2 focus:ring-red-700/20">
-                  Enter Admin Portal →
+                  Enter Principal Portal →
+                </button>
+              </div>
+
+              {/* School Coordinator Card */}
+              <div 
+                onClick={() => handleInitiateLogin('coordinator')}
+                className="group cursor-pointer bg-surface-container-lowest p-6 rounded-2xl shadow-sm border border-outline-variant hover:border-emerald-700 hover:-translate-y-1 transition-all flex flex-col justify-between"
+              >
+                <div>
+                  <div className="w-12 h-12 rounded-xl bg-emerald-100 flex items-center justify-center text-emerald-700 group-hover:bg-emerald-700 group-hover:text-white transition-colors mb-4">
+                    <Shield className="w-6 h-6" />
+                  </div>
+                  <h4 className="font-headline-sm text-lg font-bold text-emerald-700 mb-2 font-headline-md">School Coordinator</h4>
+                  <p className="text-sm text-on-surface-variant font-light leading-relaxed mb-6">
+                    Manage rosters, assign class teachers, submit student transfer applications, and file pending credentials approvals to the Headmaster.
+                  </p>
+                </div>
+                <button className="w-full bg-emerald-700 text-white font-semibold text-sm py-2.5 rounded-lg hover:bg-emerald-800 shadow-sm transition-all focus:ring-2 focus:ring-emerald-700/20">
+                  Enter Coordinator Portal →
                 </button>
               </div>
             </div>
@@ -306,38 +337,15 @@ export default function WelcomePortal({ onSelectRole }: WelcomePortalProps) {
             {/* Login form body */}
             <form onSubmit={handleLoginSubmit} className="p-6 space-y-4">
               
-              {/* Tab Switcher */}
-              <div className="flex bg-surface-container rounded-xl p-1 border border-outline-variant">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsSignUpMode(false);
-                    setErrorStatus('');
-                  }}
-                  className={`flex-1 flex items-center justify-center gap-1.5 py-2 text-xs font-bold rounded-lg transition-all cursor-pointer ${
-                    !isSignUpMode 
-                      ? 'bg-white text-primary shadow-xs' 
-                      : 'text-on-surface-variant hover:text-on-surface'
-                  }`}
-                >
-                  <LogIn className="w-3.5 h-3.5" />
-                  <span>Log In</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsSignUpMode(true);
-                    setErrorStatus('');
-                  }}
-                  className={`flex-1 flex items-center justify-center gap-1.5 py-2 text-xs font-bold rounded-lg transition-all cursor-pointer ${
-                    isSignUpMode 
-                      ? 'bg-white text-primary shadow-xs' 
-                      : 'text-on-surface-variant hover:text-on-surface'
-                  }`}
-                >
-                  <UserPlus className="w-3.5 h-3.5" />
-                  <span>Sign Up / Register</span>
-                </button>
+              {/* Tab Switcher / Sign Up disabled per secure government guidelines */}
+              <div className="bg-surface-container rounded-xl p-3 border border-outline-variant text-center space-y-1">
+                <p className="text-xs font-extrabold text-primary flex items-center justify-center gap-1.5">
+                  <Lock className="w-3.5 h-3.5" />
+                  Authorized Staff Sign-In Only
+                </p>
+                <p className="text-[10px] text-on-surface-variant font-light">
+                  Public registrations are disabled. Contact the Headmaster to initialize or recover credential channels.
+                </p>
               </div>
 
               <p className="text-xs text-on-surface-variant font-light leading-relaxed bg-surface-container px-3.5 py-3 rounded-xl border border-outline-variant">

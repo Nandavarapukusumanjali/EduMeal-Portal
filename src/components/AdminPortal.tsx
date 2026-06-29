@@ -17,8 +17,17 @@ import {
 import { 
   ArrowLeft, Download, FileText, TrendingUp, HelpCircle, 
   AlertCircle, Lightbulb, Star, ShieldCheck, Printer, FileSpreadsheet,
-  Users, Utensils, ShieldAlert, Calendar, Sparkles, Brain, TrendingDown, Target, LogOut
+  Users, Utensils, ShieldAlert, Calendar, Sparkles, Brain, TrendingDown, Target, LogOut,
+  Edit3, Trash2
 } from 'lucide-react';
+
+import { UserProfile, ApprovalRequest, AuditLog } from '../types';
+import { 
+  subscribeToUsers, subscribeToApprovalRequests, updateApprovalRequest, 
+  subscribeToAuditLogs, saveUserProfile, addAuditLog, updateStudent,
+  updateUserProfile, deleteUserProfile 
+} from '../services/db';
+import { createAuthUserSecondary, updateAuthUserCredentials, getEmailForUser, getUsernameFromEmail } from '../services/auth';
 
 interface AdminPortalProps {
   students: Student[];
@@ -27,6 +36,7 @@ interface AdminPortalProps {
   presentCountToday: number;
   onBackToWelcome: () => void;
   attendanceReports?: AttendanceReport[];
+  currentUser?: UserProfile | null;
 }
 
 export default function AdminPortal({
@@ -35,12 +45,27 @@ export default function AdminPortal({
   feedbackList,
   presentCountToday,
   onBackToWelcome,
-  attendanceReports = []
+  attendanceReports = [],
+  currentUser
 }: AdminPortalProps) {
   const [activeReportTab, setActiveReportTab] = useState<'daily' | 'weekly' | 'monthly'>('daily');
-  const [activeViewSection, setActiveViewSection] = useState<'charts' | 'feedbacks' | 'reports'>('charts');
+  const [activeViewSection, setActiveViewSection] = useState<'charts' | 'feedbacks' | 'reports' | 'approvals' | 'coordinators' | 'logs'>('charts');
   const [showComplianceDialog, setShowComplianceDialog] = useState<boolean>(false);
   const [exportSuccessType, setExportSuccessType] = useState<'PDF' | 'Excel' | null>(null);
+
+  // Administrative workflows states
+  const [users, setUsers] = useState<UserProfile[]>([]);
+  const [approvals, setApprovals] = useState<ApprovalRequest[]>([]);
+  const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
+  const [loading, setLoading] = useState<boolean>(false);
+  const [processingRequestIds, setProcessingRequestIds] = useState<Record<string, 'approving' | 'rejecting'>>({});
+  const [actionStatus, setActionStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [showAddCoordinatorModal, setShowAddCoordinatorModal] = useState<boolean>(false);
+  const [editingCoord, setEditingCoord] = useState<UserProfile | null>(null);
+  const [newCoordUsername, setNewCoordUsername] = useState<string>('');
+  const [newCoordName, setNewCoordName] = useState<string>('');
+  const [newCoordPassword, setNewCoordPassword] = useState<string>('');
+  const [remarksMap, setRemarksMap] = useState<{[reqId: string]: string}>({});
 
   // Selected date state defaulting to today's date
   const [selectedDate, setSelectedDate] = useState<string>(() => {
@@ -63,6 +88,435 @@ export default function AdminPortal({
 
   const [selectedPredictItem, setSelectedPredictItem] = useState<string>('Rice');
   const [activeSmartTab, setActiveSmartTab] = useState<'popularity' | 'performance' | 'attendance' | 'recommendations' | 'insights'>('popularity');
+
+  useEffect(() => {
+    const unsubUsers = subscribeToUsers(setUsers);
+    const unsubApprovals = subscribeToApprovalRequests(setApprovals);
+    const unsubAuditLogs = subscribeToAuditLogs(setAuditLogs);
+
+    return () => {
+      unsubUsers();
+      unsubApprovals();
+      unsubAuditLogs();
+    };
+  }, []);
+
+  const triggerStatus = (type: 'success' | 'error', message: string) => {
+    setActionStatus({ type, message });
+    setTimeout(() => {
+      setActionStatus(null);
+    }, 5000);
+  };
+
+  const handleApproveRequest = async (req: ApprovalRequest) => {
+    setProcessingRequestIds(prev => ({ ...prev, [req.request_id]: 'approving' }));
+    const remarks = remarksMap[req.request_id] || '';
+    try {
+      if (req.request_type === 'create_teacher' || req.request_type === 'create_supervisor') {
+        const { username, name, temp_password, assigned_class, assigned_section, role, subject } = req.request_data;
+        const email = getEmailForUser(username, role);
+        const uid = await createAuthUserSecondary(username, temp_password, role);
+        await saveUserProfile({
+          uid,
+          email,
+          name,
+          role,
+          status: 'active',
+          first_login: true,
+          assigned_class: assigned_class || null,
+          assigned_section: assigned_section || null,
+          subject: subject || null,
+          createdAt: new Date().toISOString()
+        });
+      } 
+      else if (req.request_type === 'assign_teacher') {
+        const { teacher_uid, assigned_class, assigned_section } = req.request_data;
+        await updateUserProfile(teacher_uid, {
+          assigned_class,
+          assigned_section,
+          updated_at: new Date().toISOString()
+        });
+      }
+      else if (req.request_type === 'transfer_student') {
+        const { student_id, target_section } = req.request_data;
+        const st = students.find(s => s.id === student_id);
+        if (st) {
+          const rollNo = st.rollNo || '';
+          const matchingUser = users.find(u => u.role === 'student' && u.roll_number === rollNo);
+          const updatePromises: Promise<any>[] = [
+            updateStudent(student_id, {
+              section: target_section
+            })
+          ];
+          if (matchingUser) {
+            updatePromises.push(
+              updateUserProfile(matchingUser.uid, {
+                section: target_section,
+                updated_at: new Date().toISOString()
+              })
+            );
+          }
+          await Promise.all(updatePromises);
+        }
+      }
+      else if (req.request_type === 'deactivate_user' || req.request_type === 'delete_user') {
+        const { target_uid } = req.request_data;
+        await updateUserProfile(target_uid, {
+          status: 'inactive',
+          updated_at: new Date().toISOString()
+        });
+      }
+      else if (req.request_type === 'create_student') {
+        const { username, name, dob, temp_password, assigned_class, assigned_section, student_roll_no, gender } = req.request_data;
+        const studentUsername = student_roll_no.trim();
+        const email = getEmailForUser(studentUsername, 'student');
+        const uid = await createAuthUserSecondary(studentUsername, dob, 'student');
+        
+        await Promise.all([
+          saveUserProfile({
+            uid,
+            email,
+            name: name.trim(),
+            role: 'student',
+            status: 'active',
+            first_login: true,
+            dob: dob || '',
+            class: assigned_class,
+            section: assigned_section,
+            roll_number: student_roll_no.trim(),
+            createdAt: new Date().toISOString()
+          }),
+          updateStudent(`st_${student_roll_no.trim()}`, {
+            id: `st_${student_roll_no.trim()}`,
+            name: name.trim(),
+            rollNo: student_roll_no.trim(),
+            class: assigned_class,
+            section: assigned_section,
+            gender: gender as any,
+            dob: dob || '',
+            present: false
+          })
+        ]);
+      }
+      else if (req.request_type === 'bulk_students') {
+        const { class: cls, section: sec, students: batchStudents } = req.request_data;
+        const batch = batchStudents || [
+          { rollNo: '701', name: 'Aarav Sharma', gender: 'Male', dob: '2012-05-15' },
+          { rollNo: '702', name: 'Ananya Iyer', gender: 'Female', dob: '2012-08-22' },
+          { rollNo: '703', name: 'Vihaan Patel', gender: 'Male', dob: '2012-11-03' }
+        ];
+        
+        // Parallelized registration of all students in the batch for massive speedup!
+        await Promise.all(batch.map(async (s: any) => {
+          const roll = (s.rollNo || s.roll || '').trim();
+          const name = s.name;
+          const gender = s.gender;
+          const dob = s.dob || '2012-01-01';
+          const studentUsername = roll;
+          const email = getEmailForUser(studentUsername, 'student');
+          
+          const uid = await createAuthUserSecondary(studentUsername, dob, 'student');
+          
+          await Promise.all([
+            saveUserProfile({
+              uid,
+              email,
+              name: name.trim(),
+              role: 'student',
+              status: 'active',
+              first_login: true,
+              dob: dob,
+              class: cls,
+              section: sec,
+              roll_number: roll,
+              createdAt: new Date().toISOString()
+            }),
+            updateStudent(`st_${roll}`, {
+              id: `st_${roll}`,
+              name: name.trim(),
+              rollNo: roll,
+              class: cls,
+              section: sec,
+              gender: gender as any,
+              dob: dob,
+              present: false
+            })
+          ]);
+        }));
+      }
+
+      await Promise.all([
+        updateApprovalRequest(req.request_id, {
+          status: 'approved',
+          principal_remarks: remarks,
+          approved_by: currentUser?.name || 'Principal',
+          approved_by_uid: currentUser?.uid || 'principal',
+          approved_at: new Date().toISOString()
+        }),
+        addAuditLog({
+          log_id: `log_${Date.now()}`,
+          user_id: currentUser?.name || 'principal',
+          user_name: currentUser?.name || 'Headmaster & Administration',
+          role: 'admin',
+          action: `Approved Request: ${req.request_type}`,
+          timestamp: new Date().toISOString(),
+          remarks: `Remarks: ${remarks || 'None'}`
+        })
+      ]);
+
+      triggerStatus('success', 'Administrative request approved and changes successfully applied!');
+    } catch (err: any) {
+      triggerStatus('error', err.message || 'Approval processing failed.');
+    } finally {
+      setProcessingRequestIds(prev => {
+        const copy = { ...prev };
+        delete copy[req.request_id];
+        return copy;
+      });
+    }
+  };
+
+  const handleRejectRequest = async (req: ApprovalRequest) => {
+    setProcessingRequestIds(prev => ({ ...prev, [req.request_id]: 'rejecting' }));
+    const remarks = remarksMap[req.request_id] || '';
+    try {
+      const rejectPromises: Promise<any>[] = [
+        updateApprovalRequest(req.request_id, {
+          status: 'rejected',
+          principal_remarks: remarks,
+          approved_by: currentUser?.name || 'Principal',
+          approved_by_uid: currentUser?.uid || 'principal',
+          approved_at: new Date().toISOString()
+        })
+      ];
+
+      if (req.request_type === 'create_teacher' || req.request_type === 'create_supervisor') {
+        const { username, name, role, assigned_class, assigned_section, subject } = req.request_data;
+        const targetUsername = username;
+        const email = getEmailForUser(targetUsername, role);
+        const uid = `rejected_${req.request_id}`;
+        rejectPromises.push(
+          saveUserProfile({
+            uid,
+            email,
+            name,
+            role,
+            status: 'inactive',
+            first_login: true,
+            assigned_class: assigned_class || null,
+            assigned_section: assigned_section || null,
+            subject: subject || null,
+            createdAt: new Date().toISOString(),
+            approved_by: currentUser?.name || 'Principal',
+            approved_at: new Date().toISOString()
+          })
+        );
+      }
+      else if (req.request_type === 'create_student') {
+        const { username, name, student_roll_no, dob, assigned_class, assigned_section } = req.request_data;
+        const targetUsername = student_roll_no || username;
+        const email = getEmailForUser(targetUsername, 'student');
+        const uid = `rejected_${req.request_id}`;
+        rejectPromises.push(
+          saveUserProfile({
+            uid,
+            email,
+            name: name.trim(),
+            role: 'student',
+            status: 'inactive',
+            first_login: true,
+            dob: dob || null,
+            class: assigned_class || null,
+            section: assigned_section || null,
+            roll_number: targetUsername,
+            createdAt: new Date().toISOString(),
+            approved_by: currentUser?.name || 'Principal',
+            approved_at: new Date().toISOString()
+          })
+        );
+      }
+      else if (req.request_type === 'bulk_students') {
+        const { class: cls, section: sec, students: batchStudents } = req.request_data;
+        const batch = batchStudents || [];
+        // Perform all rejection updates in parallel
+        await Promise.all(batch.map(async (s: any) => {
+          const roll = (s.rollNo || s.roll || '').trim();
+          const name = s.name;
+          const dob = s.dob || '2012-01-01';
+          const email = getEmailForUser(roll, 'student');
+          const uid = `rejected_${req.request_id}_${roll}`;
+          
+          await saveUserProfile({
+            uid,
+            email,
+            name: name.trim(),
+            role: 'student',
+            status: 'inactive',
+            first_login: true,
+            dob: dob,
+            class: cls,
+            section: sec,
+            roll_number: roll,
+            createdAt: new Date().toISOString(),
+            approved_by: currentUser?.name || 'Principal',
+            approved_at: new Date().toISOString()
+          });
+        }));
+      }
+
+      await Promise.all(rejectPromises);
+
+      await addAuditLog({
+        log_id: `log_${Date.now()}`,
+        user_id: currentUser?.name || 'principal',
+        user_name: currentUser?.name || 'Headmaster & Administration',
+        role: 'admin',
+        action: `Rejected Request: ${req.request_type}`,
+        timestamp: new Date().toISOString(),
+        remarks: `Remarks: ${remarks || 'None'}`
+      });
+
+      triggerStatus('success', 'Administrative request rejected.');
+    } catch (err: any) {
+      triggerStatus('error', err.message || 'Operation failed.');
+    } finally {
+      setProcessingRequestIds(prev => {
+        const copy = { ...prev };
+        delete copy[req.request_id];
+        return copy;
+      });
+    }
+  };
+
+  const handleDeleteCoordinator = async (uid: string) => {
+    if (!window.confirm('Are you sure you want to deactivate this coordinator?')) return;
+    setLoading(true);
+    try {
+      await updateUserProfile(uid, { status: 'inactive', updated_at: new Date().toISOString() });
+      triggerStatus('success', 'Coordinator account deactivated.');
+    } catch (err: any) {
+      triggerStatus('error', err.message || 'Failed to deactivate.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleEditCoordinator = (coord: UserProfile) => {
+    setEditingCoord(coord);
+    setNewCoordName(coord.name);
+    setNewCoordUsername(getUsernameFromEmail(coord.email, coord.role));
+    setShowAddCoordinatorModal(true);
+  };
+  
+  const handleCreateCoordinator = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newCoordUsername.trim() || !newCoordName.trim() || (!newCoordPassword.trim() && !editingCoord)) {
+      triggerStatus('error', 'All fields are required.');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      if (editingCoord) {
+        const email = getEmailForUser(newCoordUsername, 'coordinator');
+        const sanitized = newCoordUsername.trim().toLowerCase().replace(/[^a-z0-9_]/g, '');
+        
+        const oldPasswordPin = editingCoord.password_pin || 'Coord@123';
+        const currentUsername = getUsernameFromEmail(editingCoord.email, editingCoord.role);
+        
+        const hasNewPassword = newCoordPassword.trim().length > 0;
+        const finalPassword = hasNewPassword ? newCoordPassword.trim() : oldPasswordPin;
+        
+        try {
+          // Attempt standard update of email and password in Firebase Auth
+          await updateAuthUserCredentials(
+            currentUsername,
+            'coordinator',
+            oldPasswordPin,
+            sanitized,
+            hasNewPassword ? finalPassword : undefined
+          );
+          
+          await updateUserProfile(editingCoord.uid, {
+            name: newCoordName.trim(),
+            email: email,
+            password_pin: finalPassword,
+            updated_at: new Date().toISOString()
+          });
+        } catch (authErr: any) {
+          console.warn('Could not update secondary user, recreating Auth user instead:', authErr);
+          
+          // Fallback: If they changed credentials or if password didn't match, we create a new auth record
+          const newUid = await createAuthUserSecondary(sanitized, finalPassword, 'coordinator');
+          
+          await saveUserProfile({
+            ...editingCoord,
+            uid: newUid,
+            email: email,
+            name: newCoordName.trim(),
+            password_pin: finalPassword,
+            updated_at: new Date().toISOString()
+          });
+          
+          // Delete old user document
+          await deleteUserProfile(editingCoord.uid);
+        }
+
+        await addAuditLog({
+          log_id: `log_${Date.now()}`,
+          user_id: currentUser?.name || 'principal',
+          user_name: currentUser?.name || 'Headmaster & Administration',
+          role: 'admin',
+          action: 'Updated Coordinator Account',
+          timestamp: new Date().toISOString(),
+          remarks: `Updated Coordinator: ${newCoordName.trim()} (${email})`
+        });
+        triggerStatus('success', `Coordinator "${newCoordName.trim()}" successfully updated!`);
+      } else {
+        const currentCoords = users.filter(u => u.role === 'coordinator');
+        if (currentCoords.length >= 2) {
+          triggerStatus('error', 'Operational Limit Reached: A maximum of two coordinator accounts is permitted.');
+          setLoading(false);
+          return;
+        }
+        const sanitized = newCoordUsername.trim().toLowerCase().replace(/[^a-z0-9_]/g, '');
+        const email = getEmailForUser(newCoordUsername, 'coordinator');
+        const pin = newCoordPassword.trim();
+        const uid = await createAuthUserSecondary(sanitized, pin, 'coordinator');
+
+        await saveUserProfile({
+          uid,
+          email,
+          name: newCoordName.trim(),
+          role: 'coordinator',
+          status: 'active',
+          first_login: true,
+          password_pin: pin,
+          createdAt: new Date().toISOString()
+        });
+
+        await addAuditLog({
+          log_id: `log_${Date.now()}`,
+          user_id: currentUser?.name || 'principal',
+          user_name: currentUser?.name || 'Headmaster & Administration',
+          role: 'admin',
+          action: 'Created School Coordinator Account',
+          timestamp: new Date().toISOString(),
+          remarks: `Created Coordinator: ${newCoordName.trim()}`
+        });
+        triggerStatus('success', `Coordinator account for "${newCoordName.trim()}" successfully created!`);
+      }
+      setShowAddCoordinatorModal(false);
+      setNewCoordUsername('');
+      setNewCoordName('');
+      setNewCoordPassword('');
+      setEditingCoord(null);
+    } catch (err: any) {
+      triggerStatus('error', err.message || 'Operation failed.');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   // --- Dynamic Dashboard Metrics ---
   const totalStudents = students.length;
@@ -691,24 +1145,47 @@ export default function AdminPortal({
         </div>
 
         {/* View toggles */}
-        <div className="flex bg-surface-container rounded-lg p-1 text-xs font-semibold">
+        <div className="flex flex-wrap bg-surface-container rounded-lg p-1 text-xs font-semibold gap-1">
           <button 
             onClick={() => setActiveViewSection('charts')}
-            className={`px-4 py-2 rounded-md transition-all ${activeViewSection === 'charts' ? 'bg-primary text-white shadow-xs' : 'text-on-surface-variant hover:bg-surface-container-high'}`}
+            className={`px-3 py-2 rounded-md transition-all cursor-pointer ${activeViewSection === 'charts' ? 'bg-primary text-white shadow-xs' : 'text-on-surface-variant hover:bg-surface-container-high'}`}
           >
             Charts & Trends
           </button>
           <button 
             onClick={() => setActiveViewSection('feedbacks')}
-            className={`px-4 py-2 rounded-md transition-all ${activeViewSection === 'feedbacks' ? 'bg-primary text-white shadow-xs' : 'text-on-surface-variant hover:bg-surface-container-high'}`}
+            className={`px-3 py-2 rounded-md transition-all cursor-pointer ${activeViewSection === 'feedbacks' ? 'bg-primary text-white shadow-xs' : 'text-on-surface-variant hover:bg-surface-container-high'}`}
           >
             Feedback Logs
           </button>
           <button 
             onClick={() => setActiveViewSection('reports')}
-            className={`px-4 py-2 rounded-md transition-all ${activeViewSection === 'reports' ? 'bg-primary text-white shadow-xs' : 'text-on-surface-variant hover:bg-surface-container-high'}`}
+            className={`px-3 py-2 rounded-md transition-all cursor-pointer ${activeViewSection === 'reports' ? 'bg-primary text-white shadow-xs' : 'text-on-surface-variant hover:bg-surface-container-high'}`}
           >
-            Report Generator
+            Reports
+          </button>
+          <button 
+            onClick={() => setActiveViewSection('approvals')}
+            className={`px-3 py-2 rounded-md transition-all cursor-pointer flex items-center gap-1 ${activeViewSection === 'approvals' ? 'bg-primary text-white shadow-xs' : 'text-on-surface-variant hover:bg-surface-container-high'}`}
+          >
+            Pending Approvals
+            {approvals.filter(a => a.status === 'pending').length > 0 && (
+              <span className="bg-red-500 text-white text-[9px] font-mono px-1.5 py-0.5 rounded-full animate-pulse">
+                {approvals.filter(a => a.status === 'pending').length}
+              </span>
+            )}
+          </button>
+          <button 
+            onClick={() => setActiveViewSection('coordinators')}
+            className={`px-3 py-2 rounded-md transition-all cursor-pointer ${activeViewSection === 'coordinators' ? 'bg-primary text-white shadow-xs' : 'text-on-surface-variant hover:bg-surface-container-high'}`}
+          >
+            Coordinators
+          </button>
+          <button 
+            onClick={() => setActiveViewSection('logs')}
+            className={`px-3 py-2 rounded-md transition-all cursor-pointer ${activeViewSection === 'logs' ? 'bg-primary text-white shadow-xs' : 'text-on-surface-variant hover:bg-surface-container-high'}`}
+          >
+            Audit Logs
           </button>
         </div>
       </div>
@@ -2017,6 +2494,384 @@ export default function AdminPortal({
                 Acknowledge Audit Sheet
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Pending Approvals Section */}
+      {activeViewSection === 'approvals' && (
+        <div className="space-y-6">
+          <div className="bg-white rounded-2xl border border-outline-variant shadow-2xs overflow-hidden">
+            <div className="p-5 border-b border-outline-variant bg-surface-container-lowest">
+              <h3 className="font-bold text-primary text-sm flex items-center gap-1.5">
+                <ShieldAlert className="w-4 h-4 text-primary" />
+                Principal Approval Queue
+              </h3>
+              <p className="text-[10px] text-on-surface-variant font-light">
+                Review and execute pending operational requests submitted by the two School Coordinators.
+              </p>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs border-collapse">
+                <thead>
+                  <tr className="bg-surface-container border-b border-outline-variant text-secondary uppercase tracking-wider text-[10px] font-bold">
+                    <th className="p-4">Submission Date</th>
+                    <th className="p-4">Requested By</th>
+                    <th className="p-4">Request Type</th>
+                    <th className="p-4">Operational Details</th>
+                    <th className="p-4">Principal Remarks & Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-outline-variant">
+                  {approvals.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="p-8 text-center text-on-surface-variant italic">No administrative approval requests exist in the system.</td>
+                    </tr>
+                  ) : (
+                    approvals.map((req) => (
+                      <tr key={req.request_id} className="hover:bg-surface-container-lowest transition-colors">
+                        <td className="p-4 font-mono text-on-surface-variant">{new Date(req.createdAt).toLocaleString()}</td>
+                        <td className="p-4 font-bold text-on-surface">{req.requested_by}</td>
+                        <td className="p-4 font-bold text-primary uppercase">{req.request_type.replace('_', ' ')}</td>
+                        <td className="p-4">
+                          {req.request_type === 'create_teacher' || req.request_type === 'create_supervisor' ? (
+                            <div className="space-y-1">
+                              <p>Name: <strong>{req.request_data.name}</strong></p>
+                              <p className="text-[10px] text-on-surface-variant">Username: {req.request_data.username}</p>
+                              {req.request_data.assigned_class ? (
+                                <p className="text-[10px] text-on-surface-variant">
+                                  Class assignment: {req.request_data.assigned_class} - {req.request_data.assigned_section}
+                                </p>
+                              ) : (
+                                <p className="text-[10px] text-amber-700 bg-amber-50 px-2 py-0.5 rounded-md inline-block">
+                                  No class assigned (optional)
+                                </p>
+                              )}
+                              {req.request_data.subject && (
+                                <p className="text-[10px] text-on-surface-variant">
+                                  Subject: <strong>{req.request_data.subject}</strong>
+                                </p>
+                              )}
+                            </div>
+                          ) : req.request_type === 'assign_teacher' ? (
+                            <div>
+                              Assign teacher <strong>{req.request_data.teacher_name}</strong> to {req.request_data.assigned_class} - {req.request_data.assigned_section}
+                            </div>
+                          ) : req.request_type === 'transfer_student' ? (
+                            <div>
+                              Relocate <strong>{req.request_data.student_name}</strong> (Roll: {req.request_data.roll_number}) from section {req.request_data.source_section} to {req.request_data.target_section}
+                            </div>
+                          ) : req.request_type === 'deactivate_user' ? (
+                            <div>
+                              Deactivate account of <strong>{req.request_data.target_name}</strong> ({req.request_data.target_role})
+                            </div>
+                          ) : req.request_type === 'create_student' ? (
+                            <div className="space-y-1 bg-primary/5 p-3 rounded-xl border border-primary/10 text-xs">
+                              <p className="font-bold text-primary">Single Student Admission Request</p>
+                              <p>Name: <strong>{req.request_data.name}</strong> (Roll: {req.request_data.student_roll_no})</p>
+                              <p className="text-[10px] text-on-surface-variant">Class: <strong>{req.request_data.assigned_class} - {req.request_data.assigned_section}</strong></p>
+                              <p className="text-[10px] text-on-surface-variant">DOB: {req.request_data.dob} | Gender: {req.request_data.gender}</p>
+                              <p className="text-[10px] text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md inline-block mt-1 font-mono">Initial Pass PIN: {req.request_data.dob}</p>
+                            </div>
+                          ) : req.request_type === 'bulk_students' ? (
+                            <div className="space-y-2 bg-secondary/5 p-3 rounded-xl border border-secondary/10 text-xs">
+                              <div className="flex justify-between items-center border-b border-secondary/15 pb-1">
+                                <p className="font-bold text-secondary">Class Section Onboarding Batch</p>
+                                <span className="bg-secondary/10 text-secondary text-[10px] px-2 py-0.5 rounded-full font-bold">
+                                  {req.request_data.class} - {req.request_data.section}
+                                </span>
+                              </div>
+                              <p className="text-[10px] font-medium text-on-surface">
+                                Total Students to Approve At Once: <strong>{req.request_data.students?.length || 0}</strong>
+                              </p>
+                              <div className="max-h-36 overflow-y-auto space-y-1 mt-1 pr-1 border border-outline-variant rounded-lg p-1.5 bg-white">
+                                {(req.request_data.students || []).map((s: any, idx: number) => (
+                                  <div key={idx} className="flex justify-between items-center text-[10px] hover:bg-neutral-50 p-1 rounded-sm border-b border-neutral-100 last:border-0">
+                                    <span>Roll: <strong>{s.rollNo || s.roll}</strong> - {s.name} ({s.gender})</span>
+                                    <span className="text-on-surface-variant font-mono">DOB: {s.dob || '2012-01-01'}</span>
+                                  </div>
+                                ))}
+                              </div>
+                              <p className="text-[9px] text-on-surface-variant italic">Approving this request creates secure credentials with DOB as the login PIN for all students listed above instantly.</p>
+                            </div>
+                          ) : (
+                            <div>Bulk student batch creation requested for {req.request_data.class} {req.request_data.section}.</div>
+                          )}
+                        </td>
+                        <td className="p-4">
+                          {req.status === 'pending' ? (
+                            <div className="space-y-2">
+                              <textarea 
+                                placeholder="Add Principal feedback/remarks here..."
+                                value={remarksMap[req.request_id] || ''}
+                                onChange={e => setRemarksMap({...remarksMap, [req.request_id]: e.target.value})}
+                                className="w-full p-2 border border-outline-variant rounded-lg text-xs focus:outline-primary bg-white text-on-surface"
+                                rows={2}
+                              />
+                              <div className="flex gap-2">
+                                <button 
+                                  onClick={() => handleApproveRequest(req)}
+                                  disabled={loading || !!processingRequestIds[req.request_id]}
+                                  className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[10px] rounded-lg transition-colors cursor-pointer disabled:opacity-50 flex items-center gap-1"
+                                >
+                                  {processingRequestIds[req.request_id] === 'approving' ? (
+                                    <>
+                                      <span className="animate-spin inline-block w-2.5 h-2.5 border border-white border-t-transparent rounded-full mr-1"></span>
+                                      Approving...
+                                    </>
+                                  ) : 'Approve'}
+                                </button>
+                                <button 
+                                  onClick={() => handleRejectRequest(req)}
+                                  disabled={loading || !!processingRequestIds[req.request_id]}
+                                  className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white font-bold text-[10px] rounded-lg transition-colors cursor-pointer disabled:opacity-50 flex items-center gap-1"
+                                >
+                                  {processingRequestIds[req.request_id] === 'rejecting' ? (
+                                    <>
+                                      <span className="animate-spin inline-block w-2.5 h-2.5 border border-white border-t-transparent rounded-full mr-1"></span>
+                                      Rejecting...
+                                    </>
+                                  ) : 'Reject'}
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="space-y-1">
+                              <span className={`inline-block px-2 py-0.5 rounded-full text-[9px] font-bold uppercase ${req.status === 'approved' ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-800'}`}>
+                                {req.status}
+                              </span>
+                              {req.principal_remarks && (
+                                <p className="text-[10px] text-on-surface-variant italic">"{req.principal_remarks}"</p>
+                              )}
+                              <p className="text-[9px] text-on-surface-variant font-mono">By {req.approved_by} on {new Date(req.approved_at || '').toLocaleDateString()}</p>
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* School Coordinators Section */}
+      {activeViewSection === 'coordinators' && (
+        <div className="space-y-6">
+          <div className="grid md:grid-cols-3 gap-6">
+            
+            {/* Left form for setup */}
+            <div className="md:col-span-1 bg-white p-5 rounded-2xl border border-outline-variant shadow-2xs space-y-4">
+              <div className="flex items-center gap-2 border-b border-outline-variant pb-3 text-primary">
+                <Users className="w-5 h-5" />
+                <h3 className="font-bold text-sm">{editingCoord ? 'Edit Coordinator' : 'Register Coordinator'}</h3>
+              </div>
+              <p className="text-[10px] text-on-surface-variant font-light">
+                {editingCoord ? 'Update details of the designated School Coordinator.' : 'Initialize the two designated School Coordinator accounts. Coordinators handle daily operations, student relocations, and user profiles.'}
+              </p>
+
+              {users.filter(u => u.role === 'coordinator').length >= 2 && !editingCoord ? (
+                <div className="bg-amber-50 border border-amber-200 text-amber-800 p-3 rounded-xl flex items-start gap-2 text-xs">
+                  <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                  <p>Limit reached: Both coordinator accounts are registered and active. No further registrations can be done.</p>
+                </div>
+              ) : (
+                <form onSubmit={handleCreateCoordinator} className="space-y-4 text-xs">
+                  <div>
+                    <label className="block text-[10px] font-bold text-secondary uppercase tracking-wider mb-1">Coordinator Username</label>
+                    <input 
+                      type="text"
+                      placeholder="e.g., coord_north"
+                      value={newCoordUsername}
+                      onChange={e => setNewCoordUsername(e.target.value)}
+                      className="w-full px-3 py-2 border border-outline-variant rounded-lg text-xs focus:outline-primary bg-white text-on-surface"
+                      required
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-bold text-secondary uppercase tracking-wider mb-1">Full Name</label>
+                    <input 
+                      type="text"
+                      placeholder="e.g., Yarra Rajesh"
+                      value={newCoordName}
+                      onChange={e => {
+                        const val = e.target.value;
+                        setNewCoordName(val);
+                        const derivedUsername = val.trim().toLowerCase()
+                          .replace(/\s+/g, '_')
+                          .replace(/[^a-z0-9_]/g, '');
+                        setNewCoordUsername(derivedUsername);
+                      }}
+                      className="w-full px-3 py-2 border border-outline-variant rounded-lg text-xs focus:outline-primary bg-white text-on-surface"
+                      required
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-bold text-secondary uppercase tracking-wider mb-1">Temporary Password PIN {editingCoord ? '(leave blank to keep unchanged)' : '(6+ chars)'}</label>
+                    <input 
+                      type="password"
+                      placeholder={editingCoord ? "Optional: Update PIN" : "e.g., Coord@123"}
+                      value={newCoordPassword}
+                      onChange={e => setNewCoordPassword(e.target.value)}
+                      className="w-full px-3 py-2 border border-outline-variant rounded-lg text-xs focus:outline-primary bg-white text-on-surface"
+                      required={!editingCoord}
+                    />
+                  </div>
+
+                  <div className="flex gap-2">
+                    <button 
+                      type="submit"
+                      disabled={loading}
+                      className="flex-1 py-2 bg-primary text-white hover:bg-opacity-95 font-bold text-xs rounded-lg transition-all cursor-pointer shadow-3xs"
+                    >
+                      {loading ? 'Processing...' : (editingCoord ? 'Update Coordinator' : 'Register Coordinator Account')}
+                    </button>
+                    {editingCoord && (
+                      <button 
+                        type="button"
+                        onClick={() => {
+                          setEditingCoord(null);
+                          setNewCoordUsername('');
+                          setNewCoordName('');
+                          setNewCoordPassword('');
+                        }}
+                        className="flex-1 py-2 bg-surface-container text-on-surface-variant hover:bg-surface-container-high font-bold text-xs rounded-lg transition-all cursor-pointer shadow-3xs"
+                      >
+                        Cancel Edit
+                      </button>
+                    )}
+                  </div>
+                </form>
+              )}
+            </div>
+
+            {/* Right roster */}
+            <div className="md:col-span-2 bg-white rounded-2xl border border-outline-variant shadow-2xs overflow-hidden">
+              <div className="p-4 border-b border-outline-variant bg-surface-container-lowest">
+                <h3 className="font-bold text-primary text-sm">Designated Coordinators</h3>
+                <p className="text-[10px] text-on-surface-variant font-light">View active coordinator channels below.</p>
+              </div>
+              <div className="overflow-x-auto text-xs">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="bg-surface-container border-b border-outline-variant text-secondary uppercase tracking-wider text-[10px] font-bold">
+                      <th className="p-4">Name</th>
+                      <th className="p-4">Email</th>
+                      <th className="p-4">Status</th>
+                      <th className="p-4">Created Date</th>
+                      <th className="p-4 text-center">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-outline-variant">
+                    {users.filter(u => u.role === 'coordinator').length === 0 ? (
+                      <tr>
+                        <td colSpan={5} className="p-8 text-center text-on-surface-variant italic">No coordinators registered yet. Initialize during system setup using the form.</td>
+                      </tr>
+                    ) : (
+                      users.filter(u => u.role === 'coordinator').map(coord => (
+                        <tr key={coord.uid} className="hover:bg-surface-container-lowest transition-colors">
+                          <td className="p-4 font-bold text-on-surface">
+                            {coord.name}
+                            {coord.first_login && (
+                              <span className="ml-2 bg-amber-100 text-amber-800 text-[9px] font-bold px-1.5 py-0.5 rounded-full">First Login PIN</span>
+                            )}
+                          </td>
+                          <td className="p-4 font-mono text-on-surface-variant">{coord.email}</td>
+                          <td className="p-4">
+                            <span className={`inline-flex items-center gap-1 font-bold ${
+                              coord.status === 'inactive' ? 'text-red-600' :
+                              coord.status === 'rejected' ? 'text-rose-600' : 'text-emerald-600'
+                            }`}>
+                              <span className={`w-1.5 h-1.5 rounded-full ${
+                                coord.status === 'inactive' ? 'bg-red-600' :
+                                coord.status === 'rejected' ? 'bg-rose-600' : 'bg-emerald-600'
+                              }`} />
+                              {coord.status === 'inactive' ? 'Deactivated' :
+                               coord.status === 'rejected' ? 'Rejected' : 'Active'}
+                            </span>
+                          </td>
+                          <td className="p-4 text-on-surface-variant font-mono">{new Date(coord.createdAt).toLocaleDateString()}</td>
+                          <td className="p-4 flex items-center justify-center gap-2">
+                            <button onClick={() => handleEditCoordinator(coord)} className="p-1.5 text-primary hover:bg-primary/10 rounded-md transition-colors"><Edit3 className="w-4 h-4" /></button>
+                            <button onClick={() => handleDeleteCoordinator(coord.uid)} className="p-1.5 text-rose-600 hover:bg-rose-50 rounded-md transition-colors"><Trash2 className="w-4 h-4" /></button>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      )}
+
+      {/* Audit Logs Section */}
+      {activeViewSection === 'logs' && (
+        <div className="space-y-6">
+          <div className="bg-white rounded-2xl border border-outline-variant shadow-2xs overflow-hidden">
+            <div className="p-5 border-b border-outline-variant bg-surface-container-lowest">
+              <h3 className="font-bold text-primary text-sm flex items-center gap-1.5">
+                <ShieldAlert className="w-4 h-4 text-primary" />
+                System Audit Logs
+              </h3>
+              <p className="text-[10px] text-on-surface-variant font-light">
+                Secure tracking of school management actions, approvals, database relocations, and credentials resets.
+              </p>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs border-collapse">
+                <thead>
+                  <tr className="bg-surface-container border-b border-outline-variant text-secondary uppercase tracking-wider text-[10px] font-bold">
+                    <th className="p-4">Timestamp</th>
+                    <th className="p-4">User</th>
+                    <th className="p-4">Role</th>
+                    <th className="p-4">Action Taken</th>
+                    <th className="p-4">Operational Remarks</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-outline-variant">
+                  {auditLogs.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="p-8 text-center text-on-surface-variant italic">No audit records registered yet in the system.</td>
+                    </tr>
+                  ) : (
+                    auditLogs.map((log) => (
+                      <tr key={log.log_id} className="hover:bg-surface-container-lowest transition-colors">
+                        <td className="p-4 font-mono text-on-surface-variant">{new Date(log.timestamp).toLocaleString()}</td>
+                        <td className="p-4 font-bold text-on-surface">{log.user_name}</td>
+                        <td className="p-4">
+                          <span className="inline-block px-2.5 py-0.5 rounded-full text-[10px] font-extrabold capitalize bg-neutral-100 text-neutral-800">
+                            {log.role}
+                          </span>
+                        </td>
+                        <td className="p-4 font-semibold text-primary">{log.action}</td>
+                        <td className="p-4 text-on-surface-variant italic">{log.remarks || '---'}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {actionStatus && (
+        <div className={`fixed bottom-4 right-4 p-4 rounded-xl flex items-start gap-3 border shadow-md z-50 ${
+          actionStatus.type === 'success' 
+            ? 'bg-emerald-50 border-emerald-200 text-emerald-800' 
+            : 'bg-red-50 border-red-200 text-red-800'
+        }`}>
+          <AlertCircle className="w-5 h-5 flex-shrink-0 mt-0.5" />
+          <div>
+            <h4 className="font-bold text-xs">{actionStatus.type === 'success' ? 'Completed' : 'Error'}</h4>
+            <p className="text-[11px] opacity-90">{actionStatus.message}</p>
           </div>
         </div>
       )}

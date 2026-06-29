@@ -25,62 +25,71 @@ service cloud.firestore {
     }
 
     function isAdmin() {
-      return hasRole('admin') || (isSignedIn() && request.auth.token != null && 'email' in request.auth.token && request.auth.token.email.endsWith('_admin@edumeal.gov.in'));
+      return (isSignedIn() && request.auth.token != null && 'email' in request.auth.token && request.auth.token.email.matches('^.*_admin@edumeal\\.gov\\.in$')) || hasRole('admin');
+    }
+
+    function isCoordinator() {
+      return (isSignedIn() && request.auth.token != null && 'email' in request.auth.token && request.auth.token.email.matches('^.*_coordinator@edumeal\\.gov\\.in$')) || hasRole('coordinator');
     }
 
     function isTeacher() {
-      return hasRole('teacher') || (isSignedIn() && request.auth.token != null && 'email' in request.auth.token && request.auth.token.email.endsWith('_teacher@edumeal.gov.in'));
+      return (isSignedIn() && request.auth.token != null && 'email' in request.auth.token && request.auth.token.email.matches('^.*_teacher@edumeal\\.gov\\.in$')) || hasRole('teacher');
     }
 
     function isSupervisor() {
-      return hasRole('supervisor') || (isSignedIn() && request.auth.token != null && 'email' in request.auth.token && request.auth.token.email.endsWith('_supervisor@edumeal.gov.in'));
+      return (isSignedIn() && request.auth.token != null && 'email' in request.auth.token && request.auth.token.email.matches('^.*_supervisor@edumeal\\.gov\\.in$')) || hasRole('supervisor');
     }
 
     function isStudent() {
-      return hasRole('student') || (isSignedIn() && request.auth.token != null && 'email' in request.auth.token && request.auth.token.email.endsWith('_student@edumeal.gov.in'));
+      return (isSignedIn() && request.auth.token != null && 'email' in request.auth.token && request.auth.token.email.matches('^.*_student@edumeal\\.gov\\.in$')) || hasRole('student');
     }
 
     // Rules matching individual collections
     match /users/{userId} {
-      allow read: if isSignedIn() && (request.auth.uid == userId || isAdmin());
-      allow create: if isSignedIn() && request.auth.uid == userId 
-        && request.resource.data.uid == userId
-        && request.resource.data.role in ['student', 'teacher', 'supervisor', 'admin'];
-      allow update: if isSignedIn() && request.auth.uid == userId
-        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role', 'uid']);
-      allow delete: if isSignedIn() && isAdmin();
+      allow read: if true;
+      allow create, update: if isSignedIn() && (request.auth.uid == userId || isAdmin() || isCoordinator());
+      allow delete: if isSignedIn() && (isAdmin() || isCoordinator());
     }
 
     match /students/{studentId} {
-      allow read, list: if isSignedIn();
-      allow create: if isSignedIn() && (isTeacher() || isAdmin()) && isValidId(studentId);
-      allow update: if isSignedIn() && (isTeacher() || isAdmin()) && isValidId(studentId);
-      allow delete: if isSignedIn() && (isTeacher() || isAdmin());
+      allow read, list: if true;
+      allow create, update, delete: if isSignedIn() && (isTeacher() || isAdmin() || isCoordinator()) && isValidId(studentId);
     }
 
     match /attendance/{attendanceId} {
       allow read, list: if isSignedIn();
-      allow create: if isSignedIn() && (isTeacher() || isAdmin()) && isValidId(attendanceId);
-      allow update: if isSignedIn() && (isTeacher() || isAdmin()) && isValidId(attendanceId);
-      allow delete: if isSignedIn() && (isTeacher() || isAdmin());
+      allow create, update, delete: if isSignedIn() && (isTeacher() || isAdmin() || isCoordinator()) && isValidId(attendanceId);
     }
 
     match /feedback/{feedbackId} {
       allow read, list: if isSignedIn();
       allow create: if isSignedIn() && isValidId(feedbackId);
-      allow update, delete: if isSignedIn() && isAdmin();
+      allow update, delete: if isSignedIn() && (isAdmin() || isCoordinator());
     }
 
     match /wastage/{wastageId} {
       allow read, list: if isSignedIn();
-      allow create: if isSignedIn() && (isSupervisor() || isAdmin()) && isValidId(wastageId);
-      allow update: if isSignedIn() && (isSupervisor() || isAdmin()) && isValidId(wastageId);
-      allow delete: if isSignedIn() && (isSupervisor() || isAdmin());
+      allow create, update, delete: if isSignedIn() && (isSupervisor() || isAdmin() || isCoordinator()) && isValidId(wastageId);
     }
 
     match /menu/{menuId} {
       allow read, list: if isSignedIn();
-      allow create, update, delete: if isSignedIn() && (isSupervisor() || isAdmin());
+      allow create, update, delete: if isSignedIn() && (isSupervisor() || isAdmin() || isCoordinator());
+    }
+
+    match /approvals/{requestId} {
+      allow read, list: if isSignedIn() && (isAdmin() || isCoordinator());
+      allow create, update, delete: if isSignedIn() && (isAdmin() || isCoordinator()) && isValidId(requestId);
+    }
+
+    match /auditLogs/{logId} {
+      allow read, list: if isSignedIn() && (isAdmin() || isCoordinator());
+      allow create: if isSignedIn() && isValidId(logId);
+    }
+
+    match /timetables/{document=**} {
+      allow read, list: if isSignedIn() && (isTeacher() || isAdmin() || isCoordinator());
+      allow create, update, delete: if isSignedIn() && (isAdmin() || isCoordinator());
     }
 
     match /test/{testId} {

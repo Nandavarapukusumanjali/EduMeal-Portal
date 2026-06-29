@@ -4,14 +4,17 @@ import {
   Student, 
   DailyWastageReport, 
   StudentFeedback,
-  AttendanceReport 
+  AttendanceReport,
+  UserProfile
 } from './types';
 import WelcomePortal from './components/WelcomePortal';
 import TeacherPortal from './components/TeacherPortal';
 import SupervisorPortal from './components/SupervisorPortal';
 import StudentPortal from './components/StudentPortal';
 import AdminPortal from './components/AdminPortal';
-import { Utensils, Shield, LogOut, Radio, Shuffle, Info, Settings } from 'lucide-react';
+import CoordinatorPortal from './components/CoordinatorPortal';
+import { Utensils, Shield, LogOut, Radio, Shuffle, Info, Settings, Key } from 'lucide-react';
+import ChangePasswordModal from './components/ChangePasswordModal';
 import { 
   subscribeToStudents, 
   subscribeToFeedback, 
@@ -20,15 +23,25 @@ import {
   addFeedback, 
   addWastageReport, 
   saveAttendanceReport,
-  seedDatabaseIfEmpty
+  seedDatabaseIfEmpty,
+  getUserProfile
 } from './services/db';
-import { logoutUser } from './services/auth';
+import { logoutUser, listenToAuthState } from './services/auth';
 import { subscribeToCriticalErrors } from './firebase';
 
 export default function App() {
   // Global Role Portal Management
   const [activeRole, setActiveRole] = useState<Role | 'welcome'>('welcome');
   const [quotaExceeded, setQuotaExceeded] = useState(false);
+  const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
+  const [showChangePassword, setShowChangePassword] = useState(false);
+
+  const handlePasswordChanged = () => {
+    if (currentUser) {
+      setCurrentUser(prev => prev ? { ...prev, first_login: false } : null);
+    }
+    setShowChangePassword(false);
+  };
 
   useEffect(() => {
     const unsubscribe = subscribeToCriticalErrors((_msg, isQuota) => {
@@ -39,6 +52,40 @@ export default function App() {
     return unsubscribe;
   }, []);
 
+  // Securely listen to active Auth channel
+  useEffect(() => {
+    const unsubscribe = listenToAuthState(async (firebaseUser) => {
+      if (firebaseUser) {
+        try {
+          const profile = await getUserProfile(firebaseUser.uid);
+          if (profile) {
+            if (profile.status === 'inactive' || profile.status === 'rejected') {
+              console.warn("User account is inactive or rejected. Logging out.");
+              await logoutUser();
+              setCurrentUser(null);
+              setActiveRole('welcome');
+            } else {
+              setCurrentUser(profile);
+              setActiveRole(profile.role);
+            }
+          } else {
+            setCurrentUser(null);
+            setActiveRole('welcome');
+          }
+        } catch (err) {
+          console.error("Error loading user profile:", err);
+          setCurrentUser(null);
+          setActiveRole('welcome');
+        }
+      } else {
+        setCurrentUser(null);
+        setActiveRole('welcome');
+      }
+    });
+
+    return unsubscribe;
+  }, []);
+
   const handlePortalExit = async () => {
     try {
       await logoutUser();
@@ -46,6 +93,7 @@ export default function App() {
       console.error('Logout failed:', err);
     }
     setActiveRole('welcome');
+    setCurrentUser(null);
   };
 
   // Load baseline statistics and synchronize in real-time from Firestore database collections
@@ -280,6 +328,17 @@ export default function App() {
                 </span>
               </div>
 
+              {/* Change Password button */}
+              <button
+                type="button"
+                onClick={() => setShowChangePassword(true)}
+                className="flex items-center gap-1.5 bg-white/10 hover:bg-white/20 text-white font-extrabold text-xs py-1.5 px-3 rounded-full border border-white/10 transition-colors cursor-pointer"
+                title="Change Password"
+              >
+                <Key className="w-3.5 h-3.5 text-white" />
+                <span className="hidden md:inline">Change Password</span>
+              </button>
+
               {/* Log out to welcome */}
               <button 
                 onClick={handlePortalExit}
@@ -330,6 +389,7 @@ export default function App() {
             onSubmitAttendance={handleSubmitAttendance}
             onBackToWelcome={handlePortalExit}
             attendanceReports={attendanceReports}
+            currentUser={currentUser}
           />
         )}
 
@@ -350,6 +410,8 @@ export default function App() {
             feedbackList={feedbackList}
             onAddFeedback={handleAddFeedback}
             onBackToWelcome={handlePortalExit}
+            currentUser={currentUser}
+            onChangePassword={() => setShowChangePassword(true)}
           />
         )}
 
@@ -361,10 +423,26 @@ export default function App() {
             presentCountToday={presentStudentCount}
             onBackToWelcome={handlePortalExit}
             attendanceReports={attendanceReports}
+            currentUser={currentUser}
+          />
+        )}
+
+        {activeRole === 'coordinator' && (
+          <CoordinatorPortal 
+            onBackToWelcome={handlePortalExit}
+            currentUser={currentUser}
           />
         )}
 
       </main>
+
+      {/* Universal Change Password Modal */}
+      {(showChangePassword || currentUser?.first_login) && (
+        <ChangePasswordModal 
+          onClose={handlePasswordChanged} 
+          isForceChange={!!currentUser?.first_login}
+        />
+      )}
 
       {/* Persisted State operational status indicator (Floating bottom badge) */}
       {activeRole !== 'welcome' && (

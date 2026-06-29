@@ -1,16 +1,24 @@
 import React, { useState, useEffect } from 'react';
-import { WEEKLY_MENU, StudentFeedback } from '../types';
-import { ArrowLeft, Star, Heart, HelpCircle, Utensils, MessageSquare, Send, ThumbsUp, Coffee, AlertCircle, LogOut } from 'lucide-react';
+import { WEEKLY_MENU, StudentFeedback, TimetableEntry } from '../types';
+import { ArrowLeft, Star, Heart, HelpCircle, Utensils, MessageSquare, Send, ThumbsUp, Coffee, AlertCircle, LogOut, User, Key, Calendar } from 'lucide-react';
 import { auth } from '../firebase';
-import { getUserProfile } from '../services/db';
+import { getUserProfile, subscribeToTimetableEntries } from '../services/db';
 
 interface StudentPortalProps {
   feedbackList?: StudentFeedback[];
   onAddFeedback: (feedback: StudentFeedback) => void;
   onBackToWelcome: () => void;
+  currentUser?: any;
+  onChangePassword?: () => void;
 }
 
-export default function StudentPortal({ feedbackList = [], onAddFeedback, onBackToWelcome }: StudentPortalProps) {
+export default function StudentPortal({ 
+  feedbackList = [], 
+  onAddFeedback, 
+  onBackToWelcome,
+  currentUser,
+  onChangePassword
+}: StudentPortalProps) {
   // We can let the student select which day's meal they are rating for full testability!
   const [selectedDayIndex, setSelectedDayIndex] = useState<number>(() => {
     const day = new Date().getDay(); // 0 is Sunday, 1 is Monday, ...
@@ -31,29 +39,55 @@ export default function StudentPortal({ feedbackList = [], onAddFeedback, onBack
   const [commentText, setCommentText] = useState<string>('');
   const [isSubmitted, setIsSubmitted] = useState<boolean>(false);
   const [studentName, setStudentName] = useState<string>('Anonymous Student');
+  const [profile, setProfile] = useState<any>(null);
   const [onScreenError, setOnScreenError] = useState<string>('');
+
+  const [activeTab, setActiveTab] = useState<'meal' | 'timetable'>('meal');
+  const [timetableEntries, setTimetableEntries] = useState<TimetableEntry[]>([]);
+
+  useEffect(() => {
+    const unsub = subscribeToTimetableEntries(setTimetableEntries);
+    return () => unsub();
+  }, []);
+
+  const getPeriodTimes = (pNum: number) => {
+    const times = [
+      { start: '08:45', end: '09:35' },
+      { start: '09:35', end: '10:25' },
+      { start: '10:40', end: '11:30' },
+      { start: '11:30', end: '12:20' },
+      { start: '01:10', end: '02:00' },
+      { start: '02:00', end: '02:50' },
+      { start: '02:50', end: '03:40' }
+    ];
+    return times[pNum - 1] || { start: '08:45', end: '09:35' };
+  };
 
   const todayDateStr = new Date().toISOString().split('T')[0];
   const hasAlreadySubmittedToday = feedbackList.some(
     f => f.studentName?.trim().toLowerCase() === studentName.trim().toLowerCase() && f.date === todayDateStr
   );
 
-  // Synchronize authenticated student's full name from Firestore
+  // Synchronize authenticated student's profile from Firestore
   useEffect(() => {
-    const loadStudentName = async () => {
+    const loadStudentProfile = async () => {
       if (auth.currentUser) {
         try {
-          const profile = await getUserProfile(auth.currentUser.uid);
-          if (profile) {
-            setStudentName(profile.name);
+          const fetchedProfile = await getUserProfile(auth.currentUser.uid);
+          if (fetchedProfile) {
+            setProfile(fetchedProfile);
+            setStudentName(fetchedProfile.name);
           }
         } catch (err) {
-          console.error('Error fetching student profile name:', err);
+          console.error('Error fetching student profile:', err);
         }
+      } else if (currentUser) {
+        setProfile(currentUser);
+        setStudentName(currentUser.name);
       }
     };
-    loadStudentName();
-  }, []);
+    loadStudentProfile();
+  }, [currentUser]);
 
 
   const handleSetItemRating = (item: string, stars: number) => {
@@ -177,29 +211,66 @@ export default function StudentPortal({ feedbackList = [], onAddFeedback, onBack
             <LogOut className="w-3.5 h-3.5" />
             Logout
           </button>
-          <span className="text-secondary font-extrabold uppercase tracking-widest text-xs">Student Feedback</span>
-          <h2 className="font-headline-lg text-2xl md:text-3xl font-bold text-primary mt-1">How was your meal?</h2>
+          <span className="text-secondary font-extrabold uppercase tracking-widest text-xs">
+            Student Portal {profile ? `• ${profile.class}-${profile.section}` : ''}
+          </span>
+          <h2 className="font-headline-lg text-2xl md:text-3xl font-bold text-primary mt-1">
+            {activeTab === 'meal' ? "How was your meal?" : "My Weekly Class Timetable"}
+          </h2>
           <p className="text-on-surface-variant text-sm mt-1">
-            Your anonymous rating helps the kitchen supervisor improve ingredients and cleanliness qualities!
+            {activeTab === 'meal' 
+              ? "Your anonymous rating helps the kitchen supervisor improve ingredients and cleanliness qualities!"
+              : `Showing official scheduled slots for ${profile ? `${profile.class}-${profile.section}` : 'your class'}.`
+            }
           </p>
         </div>
 
-        {/* Day simulator dropdown */}
-        <div className="flex items-center gap-2">
-          <span className="text-xs font-bold text-on-surface-variant uppercase">Select Meal Day:</span>
-          <select 
-            value={selectedDayIndex} 
-            onChange={e => setSelectedDayIndex(parseInt(e.target.value) || 0)}
-            className="bg-white border border-outline-variant rounded-lg px-2.5 py-1.5 text-xs font-bold text-primary focus:outline-none"
-          >
-            {WEEKLY_MENU.map((menu, idx) => (
-              <option key={menu.day} value={idx}>{menu.day}</option>
-            ))}
-          </select>
-        </div>
+        {/* Day simulator dropdown (only visible on meal tab) */}
+        {activeTab === 'meal' && (
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-bold text-on-surface-variant uppercase">Select Meal Day:</span>
+            <select 
+              value={selectedDayIndex} 
+              onChange={e => setSelectedDayIndex(parseInt(e.target.value) || 0)}
+              className="bg-white border border-outline-variant rounded-lg px-2.5 py-1.5 text-xs font-bold text-primary focus:outline-none"
+            >
+              {WEEKLY_MENU.map((menu, idx) => (
+                <option key={menu.day} value={idx}>{menu.day}</option>
+              ))}
+            </select>
+          </div>
+        )}
       </div>
 
-      {isSubmitted ? (
+      {/* Tab Selector */}
+      <div className="flex border-b border-outline-variant gap-4 select-none mb-2">
+        <button 
+          onClick={() => setActiveTab('meal')}
+          className={`pb-3 text-sm font-bold border-b-2 transition-all flex items-center gap-2 ${
+            activeTab === 'meal' 
+              ? 'border-primary text-primary font-extrabold pb-2.5' 
+              : 'border-transparent text-on-surface-variant hover:text-primary'
+          }`}
+        >
+          <Utensils className="w-4 h-4" />
+          <span>Rate Today's Meal</span>
+        </button>
+        <button 
+          onClick={() => setActiveTab('timetable')}
+          className={`pb-3 text-sm font-bold border-b-2 transition-all flex items-center gap-2 ${
+            activeTab === 'timetable' 
+              ? 'border-primary text-primary font-extrabold pb-2.5' 
+              : 'border-transparent text-on-surface-variant hover:text-primary'
+          }`}
+        >
+          <Calendar className="w-4 h-4" />
+          <span>My Class Timetable</span>
+        </button>
+      </div>
+
+      {activeTab === 'meal' ? (
+        <>
+          {isSubmitted ? (
         <div className="bg-secondary-container/20 p-8 rounded-2xl border border-secondary/20 flex flex-col items-center text-center space-y-4 animate-fade-in py-16">
           <div className="w-16 h-16 bg-secondary text-white rounded-full flex items-center justify-center shadow-md">
             <ThumbsUp className="w-8 h-8" />
@@ -235,29 +306,86 @@ export default function StudentPortal({ feedbackList = [], onAddFeedback, onBack
       ) : (
         <form onSubmit={handleSubmit} className="grid grid-cols-1 md:grid-cols-12 gap-6 items-start">
           
-          {/* Today's Menu Highlight Box */}
-          <div className="md:col-span-4 bg-surface-container-lowest rounded-2xl border border-outline-variant shadow-xs overflow-hidden flex flex-col justify-between">
-            <div className="p-6">
-              <span className="text-[10px] text-primary bg-primary/10 px-2.5 py-1 rounded-full font-bold uppercase tracking-wider mb-3 inline-block">
-                {activeMenu.day}'s Serving
-              </span>
-              <h3 className="text-xl font-extrabold text-primary mb-4 leading-tight">Today's Nutrition Card</h3>
-              
-              <div className="space-y-2.5">
-                {activeMenu.items.map((item, idx) => (
-                  <div key={idx} className="flex items-center gap-3 p-2.5 bg-surface-container-low rounded-xl">
-                    <Utensils className="w-4 h-4 text-secondary flex-shrink-0" />
-                    <span className="text-xs font-bold text-on-surface">{item}</span>
-                  </div>
-                ))}
+          {/* Today's Menu Highlight Box & Profile Details */}
+          <div className="md:col-span-4 space-y-6">
+            <div className="bg-surface-container-lowest rounded-2xl border border-outline-variant shadow-xs overflow-hidden flex flex-col justify-between">
+              <div className="p-6">
+                <span className="text-[10px] text-primary bg-primary/10 px-2.5 py-1 rounded-full font-bold uppercase tracking-wider mb-3 inline-block">
+                  {activeMenu.day}'s Serving
+                </span>
+                <h3 className="text-xl font-extrabold text-primary mb-4 leading-tight">Today's Nutrition Card</h3>
+                
+                <div className="space-y-2.5">
+                  {activeMenu.items.map((item, idx) => (
+                    <div key={idx} className="flex items-center gap-3 p-2.5 bg-surface-container-low rounded-xl">
+                      <Utensils className="w-4 h-4 text-secondary flex-shrink-0" />
+                      <span className="text-xs font-bold text-on-surface">{item}</span>
+                    </div>
+                  ))}
+                </div>
               </div>
+
+              <img 
+                src={activeMenu.image} 
+                alt={activeMenu.day}
+                className="h-32 w-full object-cover border-t border-outline-variant"
+              />
             </div>
 
-            <img 
-              src={activeMenu.image} 
-              alt={activeMenu.day}
-              className="h-32 w-full object-cover border-t border-outline-variant"
-            />
+            {/* Student Profile details card */}
+            <div className="bg-surface-container-lowest p-6 rounded-2xl border border-outline-variant shadow-xs space-y-4">
+              <div className="flex items-center gap-2.5 border-b border-outline-variant pb-3">
+                <div className="w-9 h-9 rounded-xl bg-primary/10 flex items-center justify-center text-primary">
+                  <User className="w-4 h-4" />
+                </div>
+                <div>
+                  <h4 className="font-bold text-xs text-primary uppercase tracking-wider">My Profile Details</h4>
+                  <p className="text-[10px] text-on-surface-variant font-light">Student Registration Record</p>
+                </div>
+              </div>
+
+              <div className="space-y-3 text-xs">
+                <div className="flex justify-between items-center py-1.5 border-b border-neutral-50">
+                  <span className="text-on-surface-variant font-medium">Full Name</span>
+                  <strong className="text-on-surface font-extrabold text-right">{profile?.name || studentName}</strong>
+                </div>
+
+                <div className="flex justify-between items-center py-1.5 border-b border-neutral-50">
+                  <span className="text-on-surface-variant font-medium">Roll Number</span>
+                  <span className="font-mono bg-neutral-100 text-on-surface px-2 py-0.5 rounded font-bold">
+                    {profile?.roll_number || 'Pending'}
+                  </span>
+                </div>
+
+                <div className="flex justify-between items-center py-1.5 border-b border-neutral-50">
+                  <span className="text-on-surface-variant font-medium">Class / Section</span>
+                  <strong className="text-primary font-extrabold">
+                    {profile?.class ? `${profile.class} - ${profile.section || ''}` : 'Not assigned'}
+                  </strong>
+                </div>
+
+                <div className="flex justify-between items-center py-1.5 border-b border-neutral-50">
+                  <span className="text-on-surface-variant font-medium">Gender</span>
+                  <span className="text-on-surface font-semibold">{profile?.gender || 'N/A'}</span>
+                </div>
+
+                <div className="flex justify-between items-center py-1.5">
+                  <span className="text-on-surface-variant font-medium">Date of Birth (DOB)</span>
+                  <span className="font-mono text-on-surface font-semibold">{profile?.dob || 'N/A'}</span>
+                </div>
+              </div>
+
+              {onChangePassword && (
+                <button
+                  type="button"
+                  onClick={onChangePassword}
+                  className="w-full flex items-center justify-center gap-1.5 py-2.5 px-3 mt-2 bg-secondary/10 hover:bg-secondary/15 text-secondary font-extrabold text-xs rounded-xl border border-secondary/10 transition-all hover:scale-[1.02] cursor-pointer"
+                >
+                  <Key className="w-3.5 h-3.5" />
+                  <span>Change Password PIN</span>
+                </button>
+              )}
+            </div>
           </div>
 
           {/* Feedback Form Rating Star Sheets */}
@@ -358,6 +486,160 @@ export default function StudentPortal({ feedbackList = [], onAddFeedback, onBack
 
           </div>
         </form>
+      )}
+        </>
+      ) : (
+        /* Classroom Timetable View */
+        <div className="bg-white rounded-2xl border border-outline-variant shadow-2xs p-6 space-y-6 animate-fade-in">
+          {!profile?.class || !profile?.section ? (
+            <div className="text-center p-8 text-sm text-on-surface-variant italic space-y-2">
+              <AlertCircle className="w-8 h-8 text-amber-500 mx-auto" />
+              <div>Please ask your school coordinator to assign your Class and Section to view your timetable.</div>
+            </div>
+          ) : (
+            <>
+              <div className="border-b border-outline-variant pb-4">
+                <h2 className="text-lg font-bold text-primary flex items-center gap-2">
+                  <Calendar className="w-5 h-5" />
+                  Weekly Class Timetable: {profile.class} - {profile.section}
+                </h2>
+                <p className="text-xs text-on-surface-variant">
+                  Standard 7-period schedule. Timings are set by the official mid-day meal guidelines.
+                </p>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full border-collapse border border-outline-variant text-xs text-center">
+                  <thead>
+                    <tr className="bg-surface-container border-b border-outline-variant text-secondary uppercase tracking-wider text-[10px] font-bold">
+                      <th className="p-3 border border-outline-variant">Day</th>
+                      <th className="p-3 border border-outline-variant">P1<div className="text-[9px] text-neutral-400 normal-case font-normal mt-0.5">{getPeriodTimes(1).start} - {getPeriodTimes(1).end}</div></th>
+                      <th className="p-3 border border-outline-variant">P2<div className="text-[9px] text-neutral-400 normal-case font-normal mt-0.5">{getPeriodTimes(2).start} - {getPeriodTimes(2).end}</div></th>
+                      <th className="p-3 border border-outline-variant bg-amber-50/40 text-amber-800 font-bold">Short Break<div className="text-[9px] text-amber-500/70 normal-case font-normal mt-0.5">10:25 - 10:40</div></th>
+                      <th className="p-3 border border-outline-variant">P3<div className="text-[9px] text-neutral-400 normal-case font-normal mt-0.5">{getPeriodTimes(3).start} - {getPeriodTimes(3).end}</div></th>
+                      <th className="p-3 border border-outline-variant">P4<div className="text-[9px] text-neutral-400 normal-case font-normal mt-0.5">{getPeriodTimes(4).start} - {getPeriodTimes(4).end}</div></th>
+                      <th className="p-3 border border-outline-variant bg-amber-50/40 text-amber-800 font-bold">Lunch Break<div className="text-[9px] text-amber-500/70 normal-case font-normal mt-0.5">12:20 - 01:10</div></th>
+                      <th className="p-3 border border-outline-variant">P5<div className="text-[9px] text-neutral-400 normal-case font-normal mt-0.5">{getPeriodTimes(5).start} - {getPeriodTimes(5).end}</div></th>
+                      <th className="p-3 border border-outline-variant">P6<div className="text-[9px] text-neutral-400 normal-case font-normal mt-0.5">{getPeriodTimes(6).start} - {getPeriodTimes(6).end}</div></th>
+                      <th className="p-3 border border-outline-variant">P7<div className="text-[9px] text-neutral-400 normal-case font-normal mt-0.5">{getPeriodTimes(7).start} - {getPeriodTimes(7).end}</div></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'].map(day => (
+                      <tr key={day} className="hover:bg-neutral-50/50">
+                        <td className="p-2 border border-outline-variant font-bold text-on-surface bg-surface-container-lowest text-center w-24">
+                          {day}
+                        </td>
+                        {[1, 2].map(pNum => {
+                          const classClean = profile.class.replace('Class ', '');
+                          const sectionClean = profile.section.replace('Section ', '');
+                          
+                          const entry = timetableEntries.find(e => 
+                            e.day_of_week === day && 
+                            e.period_number === pNum && 
+                            e.class === classClean && 
+                            e.section === sectionClean
+                          );
+                          const hasClassSubject = entry && entry.subject && entry.subject !== 'Free Period';
+                          const subjectStr = hasClassSubject ? entry.subject : 'Free';
+                          const teacherStr = hasClassSubject && entry.teacher_id && entry.teacher_id !== 'None' ? entry.teacher_id : '';
+                          
+                          return (
+                            <td 
+                              key={pNum} 
+                              className={`p-3 border border-outline-variant transition-all ${!hasClassSubject ? 'bg-neutral-50/50 text-neutral-400' : 'bg-primary/5 font-semibold text-primary'}`}
+                            >
+                              <div className="font-bold text-sm">
+                                {subjectStr}
+                              </div>
+                              {hasClassSubject && teacherStr && (
+                                <div className="text-[10px] text-on-surface-variant font-medium mt-0.5">
+                                  {teacherStr}
+                                </div>
+                              )}
+                            </td>
+                          );
+                        })}
+
+                        {/* Short Break */}
+                        <td className="p-3 border border-outline-variant bg-amber-50/20 text-amber-700 font-bold text-[10px] text-center italic select-none">
+                          Short Break
+                        </td>
+
+                        {[3, 4].map(pNum => {
+                          const classClean = profile.class.replace('Class ', '');
+                          const sectionClean = profile.section.replace('Section ', '');
+                          
+                          const entry = timetableEntries.find(e => 
+                            e.day_of_week === day && 
+                            e.period_number === pNum && 
+                            e.class === classClean && 
+                            e.section === sectionClean
+                          );
+                          const hasClassSubject = entry && entry.subject && entry.subject !== 'Free Period';
+                          const subjectStr = hasClassSubject ? entry.subject : 'Free';
+                          const teacherStr = hasClassSubject && entry.teacher_id && entry.teacher_id !== 'None' ? entry.teacher_id : '';
+                          
+                          return (
+                            <td 
+                              key={pNum} 
+                              className={`p-3 border border-outline-variant transition-all ${!hasClassSubject ? 'bg-neutral-50/50 text-neutral-400' : 'bg-primary/5 font-semibold text-primary'}`}
+                            >
+                              <div className="font-bold text-sm">
+                                {subjectStr}
+                              </div>
+                              {hasClassSubject && teacherStr && (
+                                <div className="text-[10px] text-on-surface-variant font-medium mt-0.5">
+                                  {teacherStr}
+                                </div>
+                              )}
+                            </td>
+                          );
+                        })}
+
+                        {/* Lunch Break */}
+                        <td className="p-3 border border-outline-variant bg-amber-50/20 text-amber-700 font-bold text-[10px] text-center italic select-none">
+                          Lunch Break
+                        </td>
+
+                        {[5, 6, 7].map(pNum => {
+                          const classClean = profile.class.replace('Class ', '');
+                          const sectionClean = profile.section.replace('Section ', '');
+                          
+                          const entry = timetableEntries.find(e => 
+                            e.day_of_week === day && 
+                            e.period_number === pNum && 
+                            e.class === classClean && 
+                            e.section === sectionClean
+                          );
+                          const hasClassSubject = entry && entry.subject && entry.subject !== 'Free Period';
+                          const subjectStr = hasClassSubject ? entry.subject : 'Free';
+                          const teacherStr = hasClassSubject && entry.teacher_id && entry.teacher_id !== 'None' ? entry.teacher_id : '';
+                          
+                          return (
+                            <td 
+                              key={pNum} 
+                              className={`p-3 border border-outline-variant transition-all ${!hasClassSubject ? 'bg-neutral-50/50 text-neutral-400' : 'bg-primary/5 font-semibold text-primary'}`}
+                            >
+                              <div className="font-bold text-sm">
+                                {subjectStr}
+                              </div>
+                              {hasClassSubject && teacherStr && (
+                                <div className="text-[10px] text-on-surface-variant font-medium mt-0.5">
+                                  {teacherStr}
+                                </div>
+                              )}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+        </div>
       )}
     </div>
   );

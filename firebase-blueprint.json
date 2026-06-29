@@ -7,8 +7,19 @@
       "properties": {
         "uid": { "type": "string", "description": "Unique identifier for authentication" },
         "email": { "type": "string", "description": "User email address" },
-        "name": { "type": "string", "description": "Display name" },
-        "role": { "type": "string", "enum": ["student", "teacher", "supervisor", "admin"], "description": "Role-based access level" },
+        "name": { "type": "string", "description": "Display name / username" },
+        "role": { "type": "string", "enum": ["student", "teacher", "supervisor", "admin", "coordinator"], "description": "Role-based access level" },
+        "status": { "type": "string", "enum": ["active", "inactive"], "description": "Current account status" },
+        "first_login": { "type": "boolean", "description": "Whether this is user's first login" },
+        "created_by": { "type": "string", "description": "UID of the user who created this account" },
+        "approved_by": { "type": "string", "description": "UID of the admin who approved this account" },
+        "approved_at": { "type": "string", "format": "date-time" },
+        "updated_at": { "type": "string", "format": "date-time" },
+        "assigned_class": { "type": "string", "description": "Teacher's assigned class" },
+        "assigned_section": { "type": "string", "description": "Teacher's assigned section" },
+        "class": { "type": "string", "description": "Student's class" },
+        "section": { "type": "string", "description": "Student's section" },
+        "roll_number": { "type": "string", "description": "Student's roll number" },
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["uid", "email", "role"]
@@ -95,6 +106,36 @@
         "image": { "type": "string" }
       },
       "required": ["day", "items"]
+    },
+    "ApprovalRequest": {
+      "title": "ApprovalRequest",
+      "description": "Administrative action request requiring Principal approval",
+      "type": "object",
+      "properties": {
+        "request_id": { "type": "string" },
+        "request_type": { "type": "string" },
+        "requested_by": { "type": "string" },
+        "request_data": { "type": "object" },
+        "status": { "type": "string", "enum": ["pending", "approved", "rejected"] },
+        "principal_remarks": { "type": "string" },
+        "approved_by": { "type": "string" },
+        "approved_at": { "type": "string", "format": "date-time" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["request_id", "request_type", "requested_by", "request_data", "status", "createdAt"]
+    },
+    "AuditLog": {
+      "title": "AuditLog",
+      "description": "System audit logs for tracking actions",
+      "type": "object",
+      "properties": {
+        "log_id": { "type": "string" },
+        "user_id": { "type": "string" },
+        "action": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "remarks": { "type": "string" }
+      },
+      "required": ["log_id", "user_id", "action", "timestamp"]
     }
   },
   "firestore": {
@@ -121,6 +162,14 @@
     "/menu/{menuId}": {
       "schema": "Menu",
       "description": "Master dishes dynamic weekly menu"
+    },
+    "/approvals/{requestId}": {
+      "schema": "ApprovalRequest",
+      "description": "Approval request registry for principal review"
+    },
+    "/auditLogs/{logId}": {
+      "schema": "AuditLog",
+      "description": "System-wide activity audits"
     }
   }
 }

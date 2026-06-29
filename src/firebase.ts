@@ -3,6 +3,23 @@ import { getAuth } from 'firebase/auth';
 import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, doc, getDocFromServer } from 'firebase/firestore';
 import firebaseConfig from '../firebase-applet-config.json';
 
+// Suppress benign Firestore clock-drift console logs (e.g. system time slightly out of sync with Google Cloud)
+const originalConsoleError = console.error;
+console.error = function (...args: any[]) {
+  if (args.some(arg => typeof arg === 'string' && arg.includes('Detected an update time that is in the future'))) {
+    return;
+  }
+  originalConsoleError.apply(console, args);
+};
+
+const originalConsoleWarn = console.warn;
+console.warn = function (...args: any[]) {
+  if (args.some(arg => typeof arg === 'string' && arg.includes('Detected an update time that is in the future'))) {
+    return;
+  }
+  originalConsoleWarn.apply(console, args);
+};
+
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
 

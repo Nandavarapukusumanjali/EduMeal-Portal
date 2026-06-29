@@ -1,11 +1,11 @@
 import React, { useState } from 'react';
-import { Student, AttendanceReport } from '../types';
+import { Student, AttendanceReport, UserProfile, TimetableEntry } from '../types';
 import { 
   Users, CheckCircle, XCircle, Percent, Plus, Edit, Trash, 
   ArrowLeft, Save, Sparkles, Calendar, Printer, Download, RefreshCw, Check,
-  AlertTriangle, HelpCircle, LogOut
+  AlertTriangle, HelpCircle, LogOut, Lock, ArrowRight
 } from 'lucide-react';
-import { addStudent, updateStudent, deleteStudent } from '../services/db';
+import { addStudent, updateStudent, deleteStudent, subscribeToTimetableEntries } from '../services/db';
 
 interface TeacherPortalProps {
   students: Student[];
@@ -13,6 +13,7 @@ interface TeacherPortalProps {
   onSubmitAttendance: (classStr: string, section: string, presentCount: number, studentDetails: { [key: string]: 'P' | 'A' }, customDate?: string) => void;
   onBackToWelcome: () => void;
   attendanceReports?: AttendanceReport[];
+  currentUser?: UserProfile | null;
 }
 
 export default function TeacherPortal({
@@ -20,14 +21,29 @@ export default function TeacherPortal({
   onUpdateStudents,
   onSubmitAttendance,
   onBackToWelcome,
-  attendanceReports = []
+  attendanceReports = [],
+  currentUser = null
 }: TeacherPortalProps) {
-  const [selectedClass, setSelectedClass] = useState<string>('Class 6');
-  const [selectedSection, setSelectedSection] = useState<string>('Section A');
+  const [selectedClass, setSelectedClass] = useState<string>(() => {
+    if (currentUser?.role === 'teacher' && currentUser.assigned_class) {
+      return currentUser.assigned_class;
+    }
+    return 'Class 6';
+  });
+  const [selectedSection, setSelectedSection] = useState<string>(() => {
+    if (currentUser?.role === 'teacher' && currentUser.assigned_section) {
+      return currentUser.assigned_section;
+    }
+    return 'Section A';
+  });
   const [searchQuery, setSearchQuery] = useState<string>('');
 
+  const isAssigned = !currentUser || currentUser.role !== 'teacher' || (
+    currentUser.assigned_class === selectedClass && currentUser.assigned_section === selectedSection
+  );
+
   // Tabs and view switching
-  const [activeTab, setActiveTab] = useState<'registry' | 'monthly'>('registry');
+  const [activeTab, setActiveTab] = useState<'registry' | 'monthly' | 'timetable'>('registry');
 
   // DEBUGGING: Log attendance reports when switching tabs
   React.useEffect(() => {
@@ -81,6 +97,26 @@ export default function TeacherPortal({
 
   const todayDate = getLocalTodayDate();
   const [attendanceDate, setAttendanceDate] = useState<string>(todayDate);
+
+  const [timetableEntries, setTimetableEntries] = useState<TimetableEntry[]>([]);
+
+  React.useEffect(() => {
+    const unsub = subscribeToTimetableEntries(setTimetableEntries);
+    return () => unsub();
+  }, []);
+
+  const getPeriodTimes = (pNum: number) => {
+    const times = [
+      { start: '08:45', end: '09:35' },
+      { start: '09:35', end: '10:25' },
+      { start: '10:40', end: '11:30' },
+      { start: '11:30', end: '12:20' },
+      { start: '01:10', end: '02:00' },
+      { start: '02:00', end: '02:50' },
+      { start: '02:50', end: '03:40' }
+    ];
+    return times[pNum - 1] || { start: '08:45', end: '09:35' };
+  };
 
   // Non-blocking accessible custom dialog states to bypass sandboxed iframe restrictions on sync popup dialogs
   const [dialogInput, setDialogInput] = useState<string>('');
@@ -271,6 +307,10 @@ export default function TeacherPortal({
   };
 
   const handleStatusClick = (studentId: string) => {
+    if (!isAssigned) {
+      showCustomAlert("Unauthorized Action", `You are only authorized to post and edit attendance for your assigned class (${currentUser?.assigned_class} - ${currentUser?.assigned_section}).`);
+      return;
+    }
     const current = todayClickStatus[studentId];
     // Start as unmarked (undefined). First click -> Present (P). Toggle then flips: P -> A -> P.
     let nextStatus: 'P' | 'A';
@@ -294,6 +334,10 @@ export default function TeacherPortal({
   };
 
   const handleEditHolidayToday = () => {
+    if (!isAssigned) {
+      showCustomAlert("Unauthorized Action", `You are only authorized to configure holiday settings for your assigned class (${currentUser?.assigned_class} - ${currentUser?.assigned_section}).`);
+      return;
+    }
     showCustomConfirm(
       "Mark Holiday Confirmation",
       `Is ${attendanceDate} a holiday? Click 'Yes / Proceed' to configure a custom holiday name, or 'No / Cancel' to reset/mark it as a standard working school day.`,
@@ -537,6 +581,10 @@ export default function TeacherPortal({
   };
 
   const handleSubmit = async () => {
+    if (!isAssigned) {
+      showCustomAlert("Unauthorized Action", `You are only authorized to post and edit attendance for your assigned class (${currentUser?.assigned_class} - ${currentUser?.assigned_section}).`);
+      return;
+    }
     const realDateInfo = getIsRealDateSundayOrHoliday(attendanceDate);
     const isClosed = realDateInfo.isSunday || realDateInfo.isHoliday;
     if (isClosed) {
@@ -1036,6 +1084,16 @@ export default function TeacherPortal({
           </button>
           <span className="text-secondary font-extrabold uppercase tracking-widest text-xs">Today's Attendance</span>
           <h2 className="font-headline-lg text-2xl md:text-3xl font-bold text-primary mt-1">Classroom Registry</h2>
+          
+          {!isAssigned && (
+            <div className="mt-4 bg-amber-50 border border-amber-200 text-amber-800 p-3.5 rounded-xl text-xs flex items-center gap-2.5 shadow-3xs animate-fade-in">
+              <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0 animate-pulse" />
+              <div>
+                <span className="font-bold">Read-Only Mode:</span> You are only authorized to post and modify attendance for your assigned class (<strong>{currentUser?.assigned_class} - {currentUser?.assigned_section}</strong>).
+              </div>
+            </div>
+          )}
+
           <p className="text-on-surface-variant text-sm mt-1">
             Register students and submit accurate numbers for Mid-Day Meal planning.
           </p>
@@ -1068,22 +1126,45 @@ export default function TeacherPortal({
               <option value="Section B">Section B</option>
             </select>
           </div>
-          <div className="flex items-end h-full">
-            <button 
-              onClick={() => setIsAddMode(!isAddMode)}
-              className="flex items-center gap-1.5 bg-secondary hover:bg-secondary-hover text-white font-semibold text-xs py-2 px-3.5 rounded-lg transition-colors shadow-sm self-end"
-            >
-              <Plus className="w-4 h-4" />
-              Add Student
-            </button>
-          </div>
         </div>
       </div>
 
       {/* View Tabs */}
-      <div className="flex border-b border-outline-variant gap-4 select-none mb-1">
-        <button 
-          onClick={() => setActiveTab('registry')}
+      {!isAssigned ? (
+        <div className="bg-white p-8 rounded-2xl border border-outline-variant shadow-2xs text-center max-w-xl mx-auto my-8 space-y-6 animate-fade-in">
+          <div className="mx-auto w-16 h-16 bg-rose-50 border border-rose-200 text-rose-600 rounded-full flex items-center justify-center shadow-3xs">
+            <Lock className="w-8 h-8 animate-pulse" />
+          </div>
+          <div className="space-y-2">
+            <h3 className="font-headline-sm text-xl font-bold text-rose-950">Access Restricted: Class Not Assigned</h3>
+            <p className="text-xs sm:text-sm text-on-surface-variant leading-relaxed">
+              You are not authorized to view student details or mark attendance for <strong className="text-primary">{selectedClass} - {selectedSection}</strong>.
+            </p>
+            <p className="text-[11px] text-on-surface-variant/80 italic">
+              Your assigned class is <strong>{currentUser?.assigned_class || 'None'} - {currentUser?.assigned_section || 'None'}</strong>.
+            </p>
+          </div>
+          {currentUser?.assigned_class && currentUser?.assigned_section && (
+            <div className="pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedClass(currentUser.assigned_class || 'Class 6');
+                  setSelectedSection(currentUser.assigned_section || 'Section A');
+                }}
+                className="inline-flex items-center gap-2 bg-primary hover:bg-primary-hover text-white text-xs font-extrabold px-5 py-2.5 rounded-xl shadow-xs transition-all active:scale-95 cursor-pointer"
+              >
+                <ArrowRight className="w-4 h-4" />
+                <span>Go to My Assigned Class</span>
+              </button>
+            </div>
+          )}
+        </div>
+      ) : (
+        <>
+          <div className="flex border-b border-outline-variant gap-4 select-none mb-1">
+            <button 
+              onClick={() => setActiveTab('registry')}
           className={`pb-3 text-sm font-bold border-b-2 transition-all flex items-center gap-2 ${
             activeTab === 'registry' 
               ? 'border-primary text-primary font-extrabold pb-2.5' 
@@ -1103,6 +1184,17 @@ export default function TeacherPortal({
         >
           <Calendar className="w-4 h-4" />
           <span>Monthly Attendance Sheet</span>
+        </button>
+        <button 
+          onClick={() => setActiveTab('timetable')}
+          className={`pb-3 text-sm font-bold border-b-2 transition-all flex items-center gap-2 ${
+            activeTab === 'timetable' 
+              ? 'border-primary text-primary font-extrabold pb-2.5' 
+              : 'border-transparent text-on-surface-variant hover:text-primary'
+          }`}
+        >
+          <Calendar className="w-4 h-4" />
+          <span>My Teaching Timetable</span>
         </button>
       </div>
 
@@ -1178,59 +1270,7 @@ export default function TeacherPortal({
             </button>
           </div>
 
-          {/* Add Student Bar */}
-          {isAddMode && (
-            <form onSubmit={handleAddStudent} className="bg-surface-container-low p-4 rounded-xl border border-outline-variant flex flex-wrap gap-4 items-center animate-fade-in">
-              <div className="flex-1 min-w-[150px]">
-                <label className="block text-xs font-bold text-on-surface-variant mb-1">Roll Number</label>
-                <input 
-                  type="text" 
-                  placeholder="e.g. 6A01"
-                  value={newStudentRollNo}
-                  onChange={e => setNewStudentRollNo(e.target.value)}
-                  className="bg-white border border-outline-variant rounded-lg px-3 py-1.5 text-sm w-full focus:ring-2 focus:ring-primary focus:outline-none"
-                  required
-                />
-              </div>
-              <div className="flex-[2] min-w-[200px]">
-                <label className="block text-xs font-bold text-on-surface-variant mb-1">Full Name</label>
-                <input 
-                  type="text" 
-                  placeholder="e.g. John Doe"
-                  value={newStudentName}
-                  onChange={e => setNewStudentName(e.target.value)}
-                  className="bg-white border border-outline-variant rounded-lg px-3 py-1.5 text-sm w-full focus:ring-2 focus:ring-primary focus:outline-none"
-                  required
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-bold text-on-surface-variant mb-1">Gender</label>
-                <select 
-                  value={newStudentGender}
-                  onChange={e => setNewStudentGender(e.target.value as 'Male' | 'Female')}
-                  className="bg-white border border-outline-variant rounded-lg px-3 py-1.5 text-sm focus:ring-2 focus:ring-primary focus:outline-none"
-                >
-                  <option value="Male">Male</option>
-                  <option value="Female">Female</option>
-                </select>
-              </div>
-              <div className="flex gap-2 self-end pt-5 md:pt-0">
-                <button 
-                  type="submit" 
-                  className="bg-primary hover:bg-primary-hover text-white text-xs font-bold px-4 py-2 rounded-lg"
-                >
-                  Confirm
-                </button>
-                <button 
-                  type="button" 
-                  onClick={() => setIsAddMode(false)}
-                  className="bg-surface-container hover:bg-surface-container-high text-on-surface-variant text-xs font-bold px-3 py-2 rounded-lg"
-                >
-                  Cancel
-                </button>
-              </div>
-            </form>
-          )}
+
 
           {/* Bento Stats Grid */}
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
@@ -1313,7 +1353,6 @@ export default function TeacherPortal({
                     <th className="px-6 py-4">Student Name</th>
                     <th className="px-6 py-4">Gender</th>
                     <th className="px-6 py-4 text-center">Status</th>
-                    <th className="px-6 py-4 text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-outline-variant">
@@ -1420,29 +1459,11 @@ export default function TeacherPortal({
                             }
                           })()}
                         </td>
-                        <td className="px-6 py-4 text-right">
-                          <div className="flex items-center justify-end gap-2 text-on-surface-variant">
-                            <button 
-                              onClick={() => handleStartEdit(s)}
-                              className="p-1 hover:bg-surface-container-high rounded text-primary hover:text-primary-hover"
-                              title="Edit Details"
-                            >
-                              <Edit className="w-3.5 h-3.5" />
-                            </button>
-                            <button 
-                              onClick={() => handleDeleteStudent(s.id)}
-                              className="p-1 hover:bg-red-100 rounded text-red-600"
-                              title="Remove Student"
-                            >
-                              <Trash className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                        </td>
                       </tr>
                     ))
                   ) : (
                     <tr>
-                      <td colSpan={5} className="text-center py-8 text-on-surface-variant text-sm font-light">
+                      <td colSpan={4} className="text-center py-8 text-on-surface-variant text-sm font-light">
                         No students registered in this class/section matching query.
                       </td>
                     </tr>
@@ -1765,6 +1786,140 @@ export default function TeacherPortal({
             </div>
           </div>
         </div>
+      )}
+
+      {activeTab === 'timetable' && (
+        <div className="bg-white rounded-2xl border border-outline-variant shadow-2xs p-6 space-y-6 animate-fade-in">
+          <div className="border-b border-outline-variant pb-4">
+            <h2 className="text-lg font-bold text-primary flex items-center gap-2">
+              <Calendar className="w-5 h-5" />
+              My Weekly Teaching Schedule: {currentUser?.name}
+            </h2>
+            <p className="text-xs text-on-surface-variant">
+              Class coordinator duties: <strong className="text-primary">{currentUser?.assigned_class ? `${currentUser.assigned_class}-${currentUser.assigned_section}` : 'None'}</strong> • Primary subject: <strong>{currentUser?.subject || 'N/A'}</strong>
+            </p>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse border border-outline-variant text-xs text-center">
+              <thead>
+                <tr className="bg-surface-container border-b border-outline-variant text-secondary uppercase tracking-wider text-[10px] font-bold">
+                  <th className="p-3 border border-outline-variant">Day</th>
+                  <th className="p-3 border border-outline-variant">P1<div className="text-[9px] text-neutral-400 normal-case font-normal mt-0.5">{getPeriodTimes(1).start} - {getPeriodTimes(1).end}</div></th>
+                  <th className="p-3 border border-outline-variant">P2<div className="text-[9px] text-neutral-400 normal-case font-normal mt-0.5">{getPeriodTimes(2).start} - {getPeriodTimes(2).end}</div></th>
+                  <th className="p-3 border border-outline-variant bg-amber-50/40 text-amber-800 font-bold">Short Break<div className="text-[9px] text-amber-500/70 normal-case font-normal mt-0.5">10:25 - 10:40</div></th>
+                  <th className="p-3 border border-outline-variant">P3<div className="text-[9px] text-neutral-400 normal-case font-normal mt-0.5">{getPeriodTimes(3).start} - {getPeriodTimes(3).end}</div></th>
+                  <th className="p-3 border border-outline-variant">P4<div className="text-[9px] text-neutral-400 normal-case font-normal mt-0.5">{getPeriodTimes(4).start} - {getPeriodTimes(4).end}</div></th>
+                  <th className="p-3 border border-outline-variant bg-amber-50/40 text-amber-800 font-bold">Lunch Break<div className="text-[9px] text-amber-500/70 normal-case font-normal mt-0.5">12:20 - 01:10</div></th>
+                  <th className="p-3 border border-outline-variant">P5<div className="text-[9px] text-neutral-400 normal-case font-normal mt-0.5">{getPeriodTimes(5).start} - {getPeriodTimes(5).end}</div></th>
+                  <th className="p-3 border border-outline-variant">P6<div className="text-[9px] text-neutral-400 normal-case font-normal mt-0.5">{getPeriodTimes(6).start} - {getPeriodTimes(6).end}</div></th>
+                  <th className="p-3 border border-outline-variant">P7<div className="text-[9px] text-neutral-400 normal-case font-normal mt-0.5">{getPeriodTimes(7).start} - {getPeriodTimes(7).end}</div></th>
+                </tr>
+              </thead>
+              <tbody>
+                {['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'].map(day => (
+                  <tr key={day} className="hover:bg-neutral-50/50">
+                    <td className="p-2 border border-outline-variant font-bold text-on-surface bg-surface-container-lowest text-center w-24">
+                      {day}
+                    </td>
+                    {[1, 2].map(pNum => {
+                      const entry = timetableEntries.find(e => 
+                        e.day_of_week === day && 
+                        e.period_number === pNum && 
+                        e.teacher_id === currentUser?.name
+                      );
+                      const isFree = !entry || entry.subject === 'Free Period' || entry.teacher_id === 'None';
+                      const classNameStr = isFree ? 'Free' : (entry.class && entry.section ? `${entry.class}-${entry.section}` : entry.subject);
+                      const subjectStr = isFree ? '' : entry.subject;
+                      
+                      return (
+                        <td 
+                          key={pNum} 
+                          className={`p-3 border border-outline-variant transition-all ${isFree ? 'bg-neutral-50/50 text-neutral-400' : 'bg-primary/5 font-semibold text-primary'}`}
+                        >
+                          <div className="font-bold text-sm">
+                            {classNameStr}
+                          </div>
+                          {!isFree && subjectStr && subjectStr !== classNameStr && (
+                            <div className="text-[10px] text-on-surface-variant font-medium mt-0.5">
+                              {subjectStr}
+                            </div>
+                          )}
+                        </td>
+                      );
+                    })}
+
+                    {/* Short Break */}
+                    <td className="p-3 border border-outline-variant bg-amber-50/20 text-amber-700 font-bold text-[10px] text-center italic select-none">
+                      Short Break
+                    </td>
+
+                    {[3, 4].map(pNum => {
+                      const entry = timetableEntries.find(e => 
+                        e.day_of_week === day && 
+                        e.period_number === pNum && 
+                        e.teacher_id === currentUser?.name
+                      );
+                      const isFree = !entry || entry.subject === 'Free Period' || entry.teacher_id === 'None';
+                      const classNameStr = isFree ? 'Free' : (entry.class && entry.section ? `${entry.class}-${entry.section}` : entry.subject);
+                      const subjectStr = isFree ? '' : entry.subject;
+                      
+                      return (
+                        <td 
+                          key={pNum} 
+                          className={`p-3 border border-outline-variant transition-all ${isFree ? 'bg-neutral-50/50 text-neutral-400' : 'bg-primary/5 font-semibold text-primary'}`}
+                        >
+                          <div className="font-bold text-sm">
+                            {classNameStr}
+                          </div>
+                          {!isFree && subjectStr && subjectStr !== classNameStr && (
+                            <div className="text-[10px] text-on-surface-variant font-medium mt-0.5">
+                              {subjectStr}
+                            </div>
+                          )}
+                        </td>
+                      );
+                    })}
+
+                    {/* Lunch Break */}
+                    <td className="p-3 border border-outline-variant bg-amber-50/20 text-amber-700 font-bold text-[10px] text-center italic select-none">
+                      Lunch Break
+                    </td>
+
+                    {[5, 6, 7].map(pNum => {
+                      const entry = timetableEntries.find(e => 
+                        e.day_of_week === day && 
+                        e.period_number === pNum && 
+                        e.teacher_id === currentUser?.name
+                      );
+                      const isFree = !entry || entry.subject === 'Free Period' || entry.teacher_id === 'None';
+                      const classNameStr = isFree ? 'Free' : (entry.class && entry.section ? `${entry.class}-${entry.section}` : entry.subject);
+                      const subjectStr = isFree ? '' : entry.subject;
+                      
+                      return (
+                        <td 
+                          key={pNum} 
+                          className={`p-3 border border-outline-variant transition-all ${isFree ? 'bg-neutral-50/50 text-neutral-400' : 'bg-primary/5 font-semibold text-primary'}`}
+                        >
+                          <div className="font-bold text-sm">
+                            {classNameStr}
+                          </div>
+                          {!isFree && subjectStr && subjectStr !== classNameStr && (
+                            <div className="text-[10px] text-on-surface-variant font-medium mt-0.5">
+                              {subjectStr}
+                            </div>
+                          )}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+        </>
       )}
 
       {/* Absolute Overlay Dialog Portal matching EduMeal premium theme */}
