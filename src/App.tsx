@@ -5,7 +5,8 @@ import {
   DailyWastageReport, 
   StudentFeedback,
   AttendanceReport,
-  UserProfile
+  UserProfile,
+  AuditLog
 } from './types';
 import WelcomePortal from './components/WelcomePortal';
 import TeacherPortal from './components/TeacherPortal';
@@ -24,7 +25,8 @@ import {
   addWastageReport, 
   saveAttendanceReport,
   seedDatabaseIfEmpty,
-  getUserProfile
+  getUserProfile,
+  addAuditLog
 } from './services/db';
 import { logoutUser, listenToAuthState } from './services/auth';
 import { subscribeToCriticalErrors } from './firebase';
@@ -248,6 +250,20 @@ export default function App() {
 
       // 2. Transmit to remote database (fails gracefully if sandbox environment is unauthenticated/restricted)
       await saveAttendanceReport(report);
+
+      try {
+        await addAuditLog({
+          log_id: `log_${Date.now()}`,
+          user_id: currentUser?.uid || 'teacher',
+          user_name: currentUser?.name || 'Teacher',
+          role: 'teacher',
+          action: 'Submitted Attendance',
+          timestamp: new Date().toISOString(),
+          remarks: `Submitted attendance for ${classStr}-${section} on ${targetDate}. Total Present: ${present}, Absentees: ${absent}.`
+        });
+      } catch (logErr) {
+        console.error('Failed to save audit log for attendance:', logErr);
+      }
     } catch (err) {
       console.error('Failed to save attendance report to Firestore:', err);
     }

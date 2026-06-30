@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import SubstituteTeacherManagement from './SubstituteTeacherManagement';
 import { 
   Users, BookOpen, ShieldAlert, CheckCircle2, XCircle, Plus, Search, 
   Lock, RefreshCw, UserCheck, UserX, ArrowLeft, LogOut, Calendar, 
@@ -1425,65 +1426,13 @@ export default function CoordinatorPortal({ onBackToWelcome, currentUser }: Coor
 
       {activeTab === 'school' && (
         <div className="grid md:grid-cols-2 gap-6">
-          {/* Class Assignments Form */}
-          <div className="bg-white p-5 rounded-2xl border border-outline-variant shadow-2xs space-y-4">
-            <div className="flex items-center gap-2 border-b border-outline-variant pb-3 text-primary">
-              <GraduationCap className="w-5 h-5" />
-              <h3 className="font-bold text-sm">Assign Class Teacher</h3>
-            </div>
-            <p className="text-[10px] text-on-surface-variant font-light">Configure operational bounds for school teachers. Assignments are pushed as requests for Principal signature before becoming live.</p>
-            
-            <form onSubmit={handleAssignTeacher} className="space-y-4">
-              <div>
-                <label className="block text-[10px] font-bold text-secondary uppercase tracking-wider mb-1">Select Class Teacher</label>
-                <select 
-                  value={teacherToAssign} 
-                  onChange={e => setTeacherToAssign(e.target.value)}
-                  className="w-full px-3 py-2 border border-outline-variant rounded-lg text-xs bg-white text-on-surface focus:outline-primary"
-                  required
-                >
-                  <option value="">-- Choose Active Teacher --</option>
-                  {users.filter(u => u.role === 'teacher' && u.status !== 'inactive' && u.status !== 'rejected').map(t => (
-                    <option key={t.uid} value={t.uid}>{t.name} ({t.assigned_class ? `Currently assigned: ${t.assigned_class}` : 'Unassigned'})</option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-[10px] font-bold text-secondary uppercase tracking-wider mb-1">Target Class Bound</label>
-                  <select 
-                    value={selectedClass} 
-                    onChange={e => setSelectedClass(e.target.value)}
-                    className="w-full px-3 py-2 border border-outline-variant rounded-lg text-xs bg-white text-on-surface focus:outline-primary"
-                  >
-                    {['Class 6', 'Class 7', 'Class 8', 'Class 9', 'Class 10'].map(cls => (
-                      <option key={cls} value={cls}>{cls}</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-[10px] font-bold text-secondary uppercase tracking-wider mb-1">Target Section Bound</label>
-                  <select 
-                    value={selectedSection} 
-                    onChange={e => setSelectedSection(e.target.value)}
-                    className="w-full px-3 py-2 border border-outline-variant rounded-lg text-xs bg-white text-on-surface focus:outline-primary"
-                  >
-                    <option value="Section A">Section A</option>
-                    <option value="Section B">Section B</option>
-                  </select>
-                </div>
-              </div>
-
-              <button 
-                type="submit" 
-                disabled={loading || !teacherToAssign}
-                className="w-full py-2 bg-primary text-white hover:bg-opacity-95 font-bold text-xs rounded-lg transition-all shadow-3xs cursor-pointer disabled:opacity-50"
-              >
-                {loading ? 'Submitting request...' : 'Submit Assignment For Approval'}
-              </button>
-            </form>
-          </div>
+          {/* Class Teacher Assignment -> Substitute Teacher Assignment */}
+          <SubstituteTeacherManagement 
+            teachers={users.filter(u => u.role === 'teacher' && u.status !== 'inactive' && u.status !== 'rejected')} 
+            timetableEntries={timetableEntries}
+            addAuditLog={addAuditLog}
+            currentUser={currentUser}
+          />
 
           {/* Student Transfers & Management Form */}
           <div className="bg-white p-5 rounded-2xl border border-outline-variant shadow-2xs space-y-4">
@@ -1570,16 +1519,6 @@ export default function CoordinatorPortal({ onBackToWelcome, currentUser }: Coor
                 </button>
               </div>
             </div>
-          </div>
-          
-          {/* Teacher Timetable Management */}
-          <div className="bg-white p-5 rounded-2xl border border-outline-variant shadow-2xs space-y-4">
-            <div className="flex items-center gap-2 border-b border-outline-variant pb-3 text-primary">
-              <Calendar className="w-5 h-5" />
-              <h3 className="font-bold text-sm">Teacher Timetable Management</h3>
-            </div>
-            <p className="text-[10px] text-on-surface-variant font-light">Create and manage teaching schedules. Requires Principal approval.</p>
-            <div className="text-center p-8 text-sm text-on-surface-variant italic">Timetable management module coming soon...</div>
           </div>
         </div>
       )}

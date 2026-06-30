@@ -14,19 +14,92 @@ import {
   writeBatch
 } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../firebase';
-import { Student, DailyWastageReport, StudentFeedback, AttendanceReport, WeeklyMenu, WEEKLY_MENU, UserProfile, ApprovalRequest, AuditLog, TimetableEntry, Role } from '../types';
+import { 
+  Student, 
+  DailyWastageReport, 
+  StudentFeedback, 
+  AttendanceReport, 
+  WeeklyMenu, 
+  WEEKLY_MENU, 
+  UserProfile, 
+  ApprovalRequest, 
+  AuditLog, 
+  TimetableEntry, 
+  Role, 
+  SubstituteAssignment, 
+  Attendance 
+} from '../types';
+
+// ============================================================================
+// Local In-Memory Cache & Pub-Sub State
+// ============================================================================
+
+let usersCache: UserProfile[] | null = null;
+const usersSubscribers = new Set<(users: UserProfile[]) => void>();
+let isFetchingUsers = false;
+
+let approvalsCache: ApprovalRequest[] | null = null;
+const approvalsSubscribers = new Set<(requests: ApprovalRequest[]) => void>();
+let isFetchingApprovals = false;
+
+let auditLogsCache: AuditLog[] | null = null;
+const auditLogsSubscribers = new Set<(logs: AuditLog[]) => void>();
+let isFetchingAuditLogs = false;
+
+let studentsCache: Student[] | null = null;
+const studentsSubscribers = new Set<(students: Student[]) => void>();
+let isFetchingStudents = false;
+
+let feedbackCache: StudentFeedback[] | null = null;
+const feedbackSubscribers = new Set<(feeds: StudentFeedback[]) => void>();
+let isFetchingFeedback = false;
+
+let wastageCache: DailyWastageReport[] | null = null;
+const wastageSubscribers = new Set<(reports: DailyWastageReport[]) => void>();
+let isFetchingWastage = false;
+
+let weeklyMenuCache: WeeklyMenu[] | null = null;
+
+let timetableCache: TimetableEntry[] | null = null;
+const timetableSubscribers = new Set<(entries: TimetableEntry[]) => void>();
+let isFetchingTimetable = false;
+
+let substituteAssignmentsCache: SubstituteAssignment[] | null = null;
+const substituteAssignmentsSubscribers = new Set<(assignments: SubstituteAssignment[]) => void>();
+let isFetchingSubstituteAssignments = false;
+
+// Real-Time Shared Listener Multiplexers (for modules that genuinely need live updates)
+let attendanceCache: AttendanceReport[] | null = null;
+const attendanceSubscribers = new Set<(reports: AttendanceReport[]) => void>();
+let activeAttendanceUnsub: (() => void) | null = null;
+
+let attendanceRecordsCache: Attendance[] | null = null;
+const attendanceRecordsSubscribers = new Set<(records: Attendance[]) => void>();
+let activeAttendanceRecordsUnsub: (() => void) | null = null;
+
+export const revisedEmailsMap = new Map<string, string>();
 
 // ============================================================================
 // 1. Users & Roles Services
 // ============================================================================
 
 export async function getUserProfile(uid: string): Promise<UserProfile | null> {
+  if (usersCache) {
+    const cached = usersCache.find(u => u.uid === uid);
+    if (cached) return cached;
+  }
   const path = `users/${uid}`;
   try {
     const userDocRef = doc(db, 'users', uid);
     const snap = await getDoc(userDocRef);
     if (snap.exists()) {
-      return snap.data() as UserProfile;
+      const profile = snap.data() as UserProfile;
+      if (usersCache) {
+        const idx = usersCache.findIndex(u => u.uid === uid);
+        if (idx > -1) usersCache[idx] = profile;
+        else usersCache.push(profile);
+      }
+      return profile;
     }
     return null;
   } catch (error) {
@@ -36,6 +109,14 @@ export async function getUserProfile(uid: string): Promise<UserProfile | null> {
 }
 
 export async function getUserProfileByEmail(email: string): Promise<UserProfile | null> {
+  if (usersCache) {
+    const cachedList = usersCache.filter(u => u.email === email);
+    if (cachedList.length > 0) {
+      const activeMatch = cachedList.find(u => u.status === 'active');
+      if (activeMatch) return activeMatch;
+      return cachedList[0];
+    }
+  }
   const path = `users (query by email: ${email})`;
   try {
     const collRef = collection(db, 'users');
@@ -43,10 +124,17 @@ export async function getUserProfileByEmail(email: string): Promise<UserProfile 
     const querySnapshot = await getDocs(q);
     if (!querySnapshot.empty) {
       const list = querySnapshot.docs.map(d => d.data() as UserProfile);
-      // Prefer active profiles first to prevent getting deactivated/inactive accounts of the same email
       const activeMatch = list.find(u => u.status === 'active');
-      if (activeMatch) return activeMatch;
-      return list[0];
+      const resolved = activeMatch || list[0];
+      // Prime cache
+      if (usersCache) {
+        list.forEach(item => {
+          const idx = usersCache!.findIndex(u => u.uid === item.uid);
+          if (idx > -1) usersCache![idx] = item;
+          else usersCache!.push(item);
+        });
+      }
+      return resolved;
     }
     return null;
   } catch (error: any) {
@@ -60,9 +148,6 @@ export async function getUserProfileByEmail(email: string): Promise<UserProfile 
   }
 }
 
-/**
- * Extract original username from email and role, handling potential recreated formats correctly.
- */
 function getUsernameFromEmail(email: string, role: Role): string {
   const emailPart = email.split('@')[0].toLowerCase();
   const roleSuffix = `_${role}`.toLowerCase();
@@ -77,6 +162,22 @@ function getUsernameFromEmail(email: string, role: Role): string {
 }
 
 export async function getUserProfileByUsernameAndRole(username: string, role: Role): Promise<UserProfile | null> {
+  if (usersCache) {
+    const matches = usersCache.filter(u => {
+      if (u.role !== role) return false;
+      if (role === 'student') {
+        return u.roll_number?.trim().toLowerCase() === username.trim().toLowerCase();
+      }
+      const emailUsername = getUsernameFromEmail(u.email, role);
+      const cleanUsername = username.trim().toLowerCase().replace(/[^a-z0-9_]/g, '');
+      return emailUsername === cleanUsername;
+    });
+    if (matches.length > 0) {
+      const activeMatch = matches.find(u => u.status === 'active');
+      if (activeMatch) return activeMatch;
+      return matches[0];
+    }
+  }
   const path = `users (query by username: ${username}, role: ${role})`;
   try {
     const collRef = collection(db, 'users');
@@ -92,10 +193,14 @@ export async function getUserProfileByUsernameAndRole(username: string, role: Ro
         const cleanUsername = username.trim().toLowerCase().replace(/[^a-z0-9_]/g, '');
         return emailUsername === cleanUsername;
       });
-      // Prefer active profiles first to prevent getting deactivated/inactive accounts of the same username
       const activeMatch = matches.find(u => u.status === 'active');
-      if (activeMatch) return activeMatch;
-      return matches[0] || null;
+      const resolved = activeMatch || matches[0] || null;
+      if (resolved && usersCache) {
+        const idx = usersCache.findIndex(u => u.uid === resolved.uid);
+        if (idx > -1) usersCache[idx] = resolved;
+        else usersCache.push(resolved);
+      }
+      return resolved;
     }
     return null;
   } catch (error: any) {
@@ -109,8 +214,6 @@ export async function getUserProfileByUsernameAndRole(username: string, role: Ro
   }
 }
 
-export const revisedEmailsMap = new Map<string, string>();
-
 export async function saveUserProfile(profile: UserProfile): Promise<void> {
   const path = `users/${profile.uid}`;
   try {
@@ -119,12 +222,19 @@ export async function saveUserProfile(profile: UserProfile): Promise<void> {
     }
     const userDocRef = doc(db, 'users', profile.uid);
     await setDoc(userDocRef, profile);
+    if (usersCache) {
+      const idx = usersCache.findIndex(u => u.uid === profile.uid);
+      if (idx > -1) usersCache[idx] = profile;
+      else usersCache.push(profile);
+      usersSubscribers.forEach(sub => sub([...usersCache!]));
+    }
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);
   }
 }
 
 export async function getUsers(): Promise<UserProfile[]> {
+  if (usersCache) return usersCache;
   const path = 'users';
   try {
     const collRef = collection(db, 'users');
@@ -133,6 +243,7 @@ export async function getUsers(): Promise<UserProfile[]> {
     qSnapshot.forEach((docSnap) => {
       records.push(docSnap.data() as UserProfile);
     });
+    usersCache = records;
     return records;
   } catch (error) {
     handleFirestoreError(error, OperationType.LIST, path);
@@ -145,7 +256,7 @@ export const DEFAULT_TEACHER_SUBJECTS: Record<string, string> = {
   'avala thanuja': 'English',
   'lekkala yamini': 'Science',
   'saripalli madhuri': 'Social Studies',
-  'nandavrapu harini': 'Telugu',
+  'nandvrapu harini': 'Telugu',
   'nandavarapuru harini': 'Telugu',
   'nandavarapu harini': 'Telugu',
   'dammu amar': 'Hindi',
@@ -156,15 +267,9 @@ export const DEFAULT_TEACHER_SUBJECTS: Record<string, string> = {
 };
 
 export function subscribeToUsers(callback: (users: UserProfile[]) => void) {
-  const path = 'users';
-  const collRef = collection(db, 'users');
-  return onSnapshot(collRef, (snapshot) => {
-    const records: UserProfile[] = [];
-    snapshot.forEach((docSnap) => {
-      records.push(docSnap.data() as UserProfile);
-    });
-    
-    // Check if there are teachers that need subject assignment
+  usersSubscribers.add(callback);
+
+  const triggerTimeoutCheck = (records: UserProfile[]) => {
     setTimeout(() => {
       records.forEach(async (u) => {
         if (u.role === 'teacher' && !u.subject) {
@@ -187,11 +292,28 @@ export function subscribeToUsers(callback: (users: UserProfile[]) => void) {
         }
       });
     }, 1000);
+  };
 
-    callback(records);
-  }, (error) => {
-    handleFirestoreError(error, OperationType.LIST, path);
-  });
+  if (usersCache) {
+    callback(usersCache);
+    triggerTimeoutCheck(usersCache);
+  } else if (!isFetchingUsers) {
+    isFetchingUsers = true;
+    getUsers().then(data => {
+      usersCache = data;
+      isFetchingUsers = false;
+      usersSubscribers.forEach(sub => {
+        sub(usersCache!);
+        triggerTimeoutCheck(usersCache!);
+      });
+    }).catch(() => {
+      isFetchingUsers = false;
+    });
+  }
+
+  return () => {
+    usersSubscribers.delete(callback);
+  };
 }
 
 export async function updateUserProfile(uid: string, updates: Partial<UserProfile>): Promise<void> {
@@ -199,6 +321,13 @@ export async function updateUserProfile(uid: string, updates: Partial<UserProfil
   try {
     const docRef = doc(db, 'users', uid);
     await updateDoc(docRef, updates);
+    if (usersCache) {
+      const idx = usersCache.findIndex(u => u.uid === uid);
+      if (idx > -1) {
+        usersCache[idx] = { ...usersCache[idx], ...updates };
+        usersSubscribers.forEach(sub => sub([...usersCache!]));
+      }
+    }
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, path);
   }
@@ -209,6 +338,10 @@ export async function deleteUserProfile(uid: string): Promise<void> {
   try {
     const docRef = doc(db, 'users', uid);
     await deleteDoc(docRef);
+    if (usersCache) {
+      usersCache = usersCache.filter(u => u.uid !== uid);
+      usersSubscribers.forEach(sub => sub([...usersCache!]));
+    }
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, path);
   }
@@ -218,29 +351,57 @@ export async function deleteUserProfile(uid: string): Promise<void> {
 // 1b. Principal Approval Workflow Services
 // ============================================================================
 
+export async function getApprovalRequests(): Promise<ApprovalRequest[]> {
+  if (approvalsCache) return approvalsCache;
+  const path = 'approvals';
+  try {
+    const collRef = collection(db, 'approvals');
+    const qSnapshot = await getDocs(query(collRef, orderBy('createdAt', 'desc')));
+    const records: ApprovalRequest[] = [];
+    qSnapshot.forEach((docSnap) => {
+      records.push(docSnap.data() as ApprovalRequest);
+    });
+    approvalsCache = records;
+    return records;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.LIST, path);
+    return [];
+  }
+}
+
 export async function addApprovalRequest(req: ApprovalRequest): Promise<void> {
   const path = `approvals/${req.request_id}`;
   try {
     const docRef = doc(db, 'approvals', req.request_id);
     await setDoc(docRef, req);
+    if (approvalsCache) {
+      const idx = approvalsCache.findIndex(r => r.request_id === req.request_id);
+      if (idx > -1) approvalsCache[idx] = req;
+      else approvalsCache.unshift(req);
+      approvalsSubscribers.forEach(sub => sub([...approvalsCache!]));
+    }
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);
   }
 }
 
 export function subscribeToApprovalRequests(callback: (requests: ApprovalRequest[]) => void) {
-  const path = 'approvals';
-  const collRef = collection(db, 'approvals');
-  const q = query(collRef, orderBy('createdAt', 'desc'));
-  return onSnapshot(q, (snapshot) => {
-    const records: ApprovalRequest[] = [];
-    snapshot.forEach((docSnap) => {
-      records.push(docSnap.data() as ApprovalRequest);
+  approvalsSubscribers.add(callback);
+  if (approvalsCache) {
+    callback(approvalsCache);
+  } else if (!isFetchingApprovals) {
+    isFetchingApprovals = true;
+    getApprovalRequests().then(data => {
+      approvalsCache = data;
+      isFetchingApprovals = false;
+      approvalsSubscribers.forEach(sub => sub(approvalsCache!));
+    }).catch(() => {
+      isFetchingApprovals = false;
     });
-    callback(records);
-  }, (error) => {
-    handleFirestoreError(error, OperationType.LIST, path);
-  });
+  }
+  return () => {
+    approvalsSubscribers.delete(callback);
+  };
 }
 
 export async function updateApprovalRequest(id: string, updates: Partial<ApprovalRequest>): Promise<void> {
@@ -248,6 +409,13 @@ export async function updateApprovalRequest(id: string, updates: Partial<Approva
   try {
     const docRef = doc(db, 'approvals', id);
     await updateDoc(docRef, updates);
+    if (approvalsCache) {
+      const idx = approvalsCache.findIndex(r => r.request_id === id);
+      if (idx > -1) {
+        approvalsCache[idx] = { ...approvalsCache[idx], ...updates };
+        approvalsSubscribers.forEach(sub => sub([...approvalsCache!]));
+      }
+    }
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, path);
   }
@@ -257,29 +425,57 @@ export async function updateApprovalRequest(id: string, updates: Partial<Approva
 // 1c. Audit Logs Services
 // ============================================================================
 
+export async function getAuditLogs(): Promise<AuditLog[]> {
+  if (auditLogsCache) return auditLogsCache;
+  const path = 'auditLogs';
+  try {
+    const collRef = collection(db, 'auditLogs');
+    const qSnapshot = await getDocs(query(collRef, orderBy('timestamp', 'desc')));
+    const records: AuditLog[] = [];
+    qSnapshot.forEach((docSnap) => {
+      records.push(docSnap.data() as AuditLog);
+    });
+    auditLogsCache = records;
+    return records;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.LIST, path);
+    return [];
+  }
+}
+
 export async function addAuditLog(log: AuditLog): Promise<void> {
   const path = `auditLogs/${log.log_id}`;
   try {
     const docRef = doc(db, 'auditLogs', log.log_id);
     await setDoc(docRef, log);
+    if (auditLogsCache) {
+      const idx = auditLogsCache.findIndex(l => l.log_id === log.log_id);
+      if (idx > -1) auditLogsCache[idx] = log;
+      else auditLogsCache.unshift(log);
+      auditLogsSubscribers.forEach(sub => sub([...auditLogsCache!]));
+    }
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);
   }
 }
 
 export function subscribeToAuditLogs(callback: (logs: AuditLog[]) => void) {
-  const path = 'auditLogs';
-  const collRef = collection(db, 'auditLogs');
-  const q = query(collRef, orderBy('timestamp', 'desc'));
-  return onSnapshot(q, (snapshot) => {
-    const records: AuditLog[] = [];
-    snapshot.forEach((docSnap) => {
-      records.push(docSnap.data() as AuditLog);
+  auditLogsSubscribers.add(callback);
+  if (auditLogsCache) {
+    callback(auditLogsCache);
+  } else if (!isFetchingAuditLogs) {
+    isFetchingAuditLogs = true;
+    getAuditLogs().then(data => {
+      auditLogsCache = data;
+      isFetchingAuditLogs = false;
+      auditLogsSubscribers.forEach(sub => sub(auditLogsCache!));
+    }).catch(() => {
+      isFetchingAuditLogs = false;
     });
-    callback(records);
-  }, (error) => {
-    handleFirestoreError(error, OperationType.LIST, path);
-  });
+  }
+  return () => {
+    auditLogsSubscribers.delete(callback);
+  };
 }
 
 // ============================================================================
@@ -287,6 +483,7 @@ export function subscribeToAuditLogs(callback: (logs: AuditLog[]) => void) {
 // ============================================================================
 
 export async function getStudents(): Promise<Student[]> {
+  if (studentsCache) return studentsCache;
   const path = 'students';
   try {
     const collRef = collection(db, 'students');
@@ -295,6 +492,7 @@ export async function getStudents(): Promise<Student[]> {
     qSnapshot.forEach((docSnap) => {
       records.push({ ...docSnap.data() as Student, id: docSnap.id });
     });
+    studentsCache = records;
     return records;
   } catch (error) {
     handleFirestoreError(error, OperationType.LIST, path);
@@ -303,33 +501,46 @@ export async function getStudents(): Promise<Student[]> {
 }
 
 export function subscribeToStudents(callback: (students: Student[]) => void, onError?: (err: Error) => void) {
-  const path = 'students';
-  const collRef = collection(db, 'students');
-  return onSnapshot(collRef, (snapshot) => {
-    const records: Student[] = [];
-    snapshot.forEach((docSnap) => {
-      records.push({ ...docSnap.data() as Student, id: docSnap.id });
+  studentsSubscribers.add(callback);
+  if (studentsCache) {
+    callback(studentsCache);
+  } else if (!isFetchingStudents) {
+    isFetchingStudents = true;
+    getStudents().then(data => {
+      studentsCache = data;
+      isFetchingStudents = false;
+      studentsSubscribers.forEach(sub => sub(studentsCache!));
+    }).catch(err => {
+      isFetchingStudents = false;
+      if (onError) onError(err);
     });
-    callback(records);
-  }, (error) => {
-    handleFirestoreError(error, OperationType.LIST, path);
-    if (onError) onError(error);
-  });
+  }
+  return () => {
+    studentsSubscribers.delete(callback);
+  };
 }
 
 export async function addStudent(student: Omit<Student, 'id'>, id?: string): Promise<string> {
   const path = 'students';
   try {
     const collRef = collection(db, 'students');
-    if (id) {
-      const docRef = doc(db, 'students', id);
-      await setDoc(docRef, { ...student, id });
-      return id;
+    let finalId = id;
+    if (finalId) {
+      const docRef = doc(db, 'students', finalId);
+      await setDoc(docRef, { ...student, id: finalId });
     } else {
       const docRef = await addDoc(collRef, student);
       await updateDoc(docRef, { id: docRef.id });
-      return docRef.id;
+      finalId = docRef.id;
     }
+    if (studentsCache) {
+      const newStudent = { ...student, id: finalId } as Student;
+      const idx = studentsCache.findIndex(s => s.id === finalId);
+      if (idx > -1) studentsCache[idx] = newStudent;
+      else studentsCache.push(newStudent);
+      studentsSubscribers.forEach(sub => sub([...studentsCache!]));
+    }
+    return finalId || '';
   } catch (error) {
     handleFirestoreError(error, OperationType.CREATE, path);
     return '';
@@ -341,6 +552,13 @@ export async function updateStudent(id: string, updates: Partial<Student>): Prom
   try {
     const docRef = doc(db, 'students', id);
     await setDoc(docRef, updates, { merge: true });
+    if (studentsCache) {
+      const idx = studentsCache.findIndex(s => s.id === id);
+      if (idx > -1) {
+        studentsCache[idx] = { ...studentsCache[idx], ...updates };
+        studentsSubscribers.forEach(sub => sub([...studentsCache!]));
+      }
+    }
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, path);
   }
@@ -351,16 +569,21 @@ export async function deleteStudent(id: string): Promise<void> {
   try {
     const docRef = doc(db, 'students', id);
     await deleteDoc(docRef);
+    if (studentsCache) {
+      studentsCache = studentsCache.filter(s => s.id !== id);
+      studentsSubscribers.forEach(sub => sub([...studentsCache!]));
+    }
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, path);
   }
 }
 
 // ============================================================================
-// 3. Attendance Logs Services
+// 3. Attendance Logs Services (Multiplexed Live Subscriptions)
 // ============================================================================
 
 export async function getAttendanceReports(): Promise<AttendanceReport[]> {
+  if (attendanceCache) return attendanceCache;
   const path = 'attendance';
   try {
     const collRef = collection(db, 'attendance');
@@ -369,6 +592,7 @@ export async function getAttendanceReports(): Promise<AttendanceReport[]> {
     qSnapshot.forEach((docSnap) => {
       records.push(docSnap.data() as AttendanceReport);
     });
+    attendanceCache = records;
     return records;
   } catch (error) {
     handleFirestoreError(error, OperationType.LIST, path);
@@ -377,19 +601,33 @@ export async function getAttendanceReports(): Promise<AttendanceReport[]> {
 }
 
 export function subscribeToAttendance(callback: (reports: AttendanceReport[]) => void) {
-  const path = 'attendance';
-  const collRef = collection(db, 'attendance');
-  const q = query(collRef, orderBy('date', 'desc'));
-  
-  return onSnapshot(q, (snapshot) => {
-    const records: AttendanceReport[] = [];
-    snapshot.forEach((docSnap) => {
-      records.push(docSnap.data() as AttendanceReport);
+  attendanceSubscribers.add(callback);
+  if (attendanceCache) {
+    callback(attendanceCache);
+  }
+  if (!activeAttendanceUnsub) {
+    const path = 'attendance';
+    const collRef = collection(db, 'attendance');
+    const q = query(collRef, orderBy('date', 'desc'));
+    
+    activeAttendanceUnsub = onSnapshot(q, (snapshot) => {
+      const records: AttendanceReport[] = [];
+      snapshot.forEach((docSnap) => {
+        records.push(docSnap.data() as AttendanceReport);
+      });
+      attendanceCache = records;
+      attendanceSubscribers.forEach(sub => sub(records));
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, path);
     });
-    callback(records);
-  }, (error) => {
-    handleFirestoreError(error, OperationType.LIST, path);
-  });
+  }
+  return () => {
+    attendanceSubscribers.delete(callback);
+    if (attendanceSubscribers.size === 0 && activeAttendanceUnsub) {
+      activeAttendanceUnsub();
+      activeAttendanceUnsub = null;
+    }
+  };
 }
 
 export async function saveAttendanceReport(report: AttendanceReport): Promise<void> {
@@ -397,8 +635,29 @@ export async function saveAttendanceReport(report: AttendanceReport): Promise<vo
   try {
     const docRef = doc(db, 'attendance', report.id);
     await setDoc(docRef, report);
+    if (attendanceCache) {
+      const idx = attendanceCache.findIndex(r => r.id === report.id);
+      if (idx > -1) attendanceCache[idx] = report;
+      else attendanceCache.unshift(report);
+      attendanceSubscribers.forEach(sub => sub([...attendanceCache!]));
+    }
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);
+  }
+}
+
+export async function deleteAttendanceReport(id: string): Promise<void> {
+  const path = `attendance/${id}`;
+  try {
+    const docRef = doc(db, 'attendance', id);
+    await deleteDoc(docRef);
+    if (attendanceCache) {
+      attendanceCache = attendanceCache.filter(r => r.id !== id);
+      attendanceSubscribers.forEach(sub => sub([...attendanceCache!]));
+    }
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, path);
+    throw error;
   }
 }
 
@@ -407,6 +666,7 @@ export async function saveAttendanceReport(report: AttendanceReport): Promise<vo
 // ============================================================================
 
 export async function getFeedbackReports(): Promise<StudentFeedback[]> {
+  if (feedbackCache) return feedbackCache;
   const path = 'feedback';
   try {
     const collRef = collection(db, 'feedback');
@@ -415,6 +675,7 @@ export async function getFeedbackReports(): Promise<StudentFeedback[]> {
     qSnapshot.forEach((docSnap) => {
       records.push(docSnap.data() as StudentFeedback);
     });
+    feedbackCache = records;
     return records;
   } catch (error) {
     handleFirestoreError(error, OperationType.LIST, path);
@@ -423,19 +684,22 @@ export async function getFeedbackReports(): Promise<StudentFeedback[]> {
 }
 
 export function subscribeToFeedback(callback: (feeds: StudentFeedback[]) => void) {
-  const path = 'feedback';
-  const collRef = collection(db, 'feedback');
-  const q = query(collRef, orderBy('date', 'desc'));
-  
-  return onSnapshot(q, (snapshot) => {
-    const records: StudentFeedback[] = [];
-    snapshot.forEach((docSnap) => {
-      records.push(docSnap.data() as StudentFeedback);
+  feedbackSubscribers.add(callback);
+  if (feedbackCache) {
+    callback(feedbackCache);
+  } else if (!isFetchingFeedback) {
+    isFetchingFeedback = true;
+    getFeedbackReports().then(data => {
+      feedbackCache = data;
+      isFetchingFeedback = false;
+      feedbackSubscribers.forEach(sub => sub(feedbackCache!));
+    }).catch(() => {
+      isFetchingFeedback = false;
     });
-    callback(records);
-  }, (error) => {
-    handleFirestoreError(error, OperationType.LIST, path);
-  });
+  }
+  return () => {
+    feedbackSubscribers.delete(callback);
+  };
 }
 
 export async function addFeedback(report: StudentFeedback): Promise<void> {
@@ -443,6 +707,12 @@ export async function addFeedback(report: StudentFeedback): Promise<void> {
   try {
     const docRef = doc(db, 'feedback', report.id);
     await setDoc(docRef, report);
+    if (feedbackCache) {
+      const idx = feedbackCache.findIndex(f => f.id === report.id);
+      if (idx > -1) feedbackCache[idx] = report;
+      else feedbackCache.unshift(report);
+      feedbackSubscribers.forEach(sub => sub([...feedbackCache!]));
+    }
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);
   }
@@ -453,6 +723,7 @@ export async function addFeedback(report: StudentFeedback): Promise<void> {
 // ============================================================================
 
 export async function getWastageReports(): Promise<DailyWastageReport[]> {
+  if (wastageCache) return wastageCache;
   const path = 'wastage';
   try {
     const collRef = collection(db, 'wastage');
@@ -461,6 +732,7 @@ export async function getWastageReports(): Promise<DailyWastageReport[]> {
     qSnapshot.forEach((docSnap) => {
       records.push(docSnap.data() as DailyWastageReport);
     });
+    wastageCache = records;
     return records;
   } catch (error) {
     handleFirestoreError(error, OperationType.LIST, path);
@@ -469,19 +741,22 @@ export async function getWastageReports(): Promise<DailyWastageReport[]> {
 }
 
 export function subscribeToWastage(callback: (reports: DailyWastageReport[]) => void) {
-  const path = 'wastage';
-  const collRef = collection(db, 'wastage');
-  const q = query(collRef, orderBy('date', 'asc'));
-  
-  return onSnapshot(q, (snapshot) => {
-    const records: DailyWastageReport[] = [];
-    snapshot.forEach((docSnap) => {
-      records.push(docSnap.data() as DailyWastageReport);
+  wastageSubscribers.add(callback);
+  if (wastageCache) {
+    callback(wastageCache);
+  } else if (!isFetchingWastage) {
+    isFetchingWastage = true;
+    getWastageReports().then(data => {
+      wastageCache = data;
+      isFetchingWastage = false;
+      wastageSubscribers.forEach(sub => sub(wastageCache!));
+    }).catch(() => {
+      isFetchingWastage = false;
     });
-    callback(records);
-  }, (error) => {
-    handleFirestoreError(error, OperationType.LIST, path);
-  });
+  }
+  return () => {
+    wastageSubscribers.delete(callback);
+  };
 }
 
 export async function addWastageReport(report: DailyWastageReport): Promise<void> {
@@ -489,6 +764,12 @@ export async function addWastageReport(report: DailyWastageReport): Promise<void
   try {
     const docRef = doc(db, 'wastage', report.id);
     await setDoc(docRef, report);
+    if (wastageCache) {
+      const idx = wastageCache.findIndex(w => w.id === report.id);
+      if (idx > -1) wastageCache[idx] = report;
+      else wastageCache.push(report);
+      wastageSubscribers.forEach(sub => sub([...wastageCache!]));
+    }
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);
   }
@@ -499,6 +780,7 @@ export async function addWastageReport(report: DailyWastageReport): Promise<void
 // ============================================================================
 
 export async function getWeeklyMenu(): Promise<WeeklyMenu[]> {
+  if (weeklyMenuCache) return weeklyMenuCache;
   const path = 'menu';
   try {
     const collRef = collection(db, 'menu');
@@ -516,6 +798,7 @@ export async function getWeeklyMenu(): Promise<WeeklyMenu[]> {
         records.push(item);
       }
     }
+    weeklyMenuCache = records;
     return records;
   } catch (error) {
     handleFirestoreError(error, OperationType.LIST, path);
@@ -529,7 +812,6 @@ export async function seedDatabaseIfEmpty() {
     const studentsColl = collection(db, 'students');
     const studentDocs = await getDocs(studentsColl);
     
-    // Check if any old formats (with single initials or three-word names) or missing/unrandomized DOBs exist
     let hasOldFormats = false;
     let missingDob = false;
     const uniqueDobs = new Set<string>();
@@ -547,10 +829,8 @@ export async function seedDatabaseIfEmpty() {
       }
     }
 
-    // If there is less than 15 unique DOBs among 50+ students, they aren't randomized properly!
     const isNotRandomized = !studentDocs.empty && uniqueDobs.size < 15;
 
-    // Seed or overwrite if clean seeding is required or old format detected or missing/unrandomized dob
     if (studentDocs.empty || studentDocs.size < 50 || hasOldFormats || missingDob || isNotRandomized) {
       console.log('Seeding baseline student registries to Firestore with Telugu Surname, GivenName, and Randomized DOB...');
       
@@ -582,7 +862,6 @@ export async function seedDatabaseIfEmpty() {
  
       for (const c of classes) {
         for (const sec of sections) {
-          // 15 Boys
           for (let i = 1; i <= 15; i++) {
             const bName = boysFirst[(c * 7 + sec.charCodeAt(0) * 11 + i * 17) % boysFirst.length];
             const bSur = surnames[(c * 17 + sec.charCodeAt(0) + i * 19) % surnames.length];
@@ -590,7 +869,6 @@ export async function seedDatabaseIfEmpty() {
             const rollStr = i.toString().padStart(2, '0');
             const rollNo = `${c}${sec}${rollStr}`;
             
-            // Year based on class (Class 6: 2014-2015, Class 10: 2010-2011)
             let birthYear = 2014;
             if (c === 6) birthYear = 2014 + Math.floor(Math.random() * 2);
             else if (c === 7) birthYear = 2013 + Math.floor(Math.random() * 2);
@@ -613,7 +891,6 @@ export async function seedDatabaseIfEmpty() {
               dob: dobStr
             });
           }
-          // 15 Girls
           for (let i = 16; i <= 30; i++) {
             const gName = girlsFirst[(c * 13 + sec.charCodeAt(0) * 17 + i * 23) % girlsFirst.length];
             const gSur = surnames[(c * 19 + sec.charCodeAt(0) * 2 + i * 29) % surnames.length];
@@ -621,7 +898,6 @@ export async function seedDatabaseIfEmpty() {
             const rollStr = i.toString().padStart(2, '0');
             const rollNo = `${c}${sec}${rollStr}`;
 
-            // Year based on class
             let birthYear = 2014;
             if (c === 6) birthYear = 2014 + Math.floor(Math.random() * 2);
             else if (c === 7) birthYear = 2013 + Math.floor(Math.random() * 2);
@@ -647,11 +923,12 @@ export async function seedDatabaseIfEmpty() {
         }
       }
 
-      // Write students to Firestore (use batch-style sets)
       for (const s of generatedStudents) {
         await setDoc(doc(db, 'students', s.id), s);
       }
-      console.log(`Successfully seeded ${generatedStudents.length} Indian students with beautiful Surname + GivenName pairs.`);
+      studentsCache = generatedStudents;
+      studentsSubscribers.forEach(sub => sub([...studentsCache!]));
+      console.log(`Successfully seeded ${generatedStudents.length} Indian students.`);
     }
   } catch (error) {
     console.warn('Silent warning - skipped or missing permission to seed students:', error);
@@ -681,6 +958,8 @@ export async function seedDatabaseIfEmpty() {
       for (const w of baselineWastage) {
         await setDoc(doc(db, 'wastage', w.id), w);
       }
+      wastageCache = baselineWastage;
+      wastageSubscribers.forEach(sub => sub([...wastageCache!]));
     }
   } catch (error) {
     console.warn('Silent warning - skipped or missing permission to seed wastage:', error);
@@ -705,6 +984,8 @@ export async function seedDatabaseIfEmpty() {
       for (const f of baselineFeedback) {
         await setDoc(doc(db, 'feedback', f.id), f);
       }
+      feedbackCache = baselineFeedback;
+      feedbackSubscribers.forEach(sub => sub([...feedbackCache!]));
     }
   } catch (error) {
     console.warn('Silent warning - skipped or missing permission to seed feedback:', error);
@@ -716,10 +997,6 @@ export async function seedDatabaseIfEmpty() {
   } catch (error) {
     console.warn('Silent warning - skipped or missing permission to seed menu:', error);
   }
-
-
-  // 5. Seed Attendance Reports for June 12 and June 13, 2026 (for school reopening days)
-  // Seeding removed to encourage fresh submission of complete attendance data
 }
 
 // ============================================================================
@@ -727,6 +1004,7 @@ export async function seedDatabaseIfEmpty() {
 // ============================================================================
 
 export async function getTimetableEntries(): Promise<TimetableEntry[]> {
+  if (timetableCache) return timetableCache;
   const path = 'timetables';
   try {
     const collRef = collection(db, 'timetables');
@@ -735,6 +1013,7 @@ export async function getTimetableEntries(): Promise<TimetableEntry[]> {
     qSnapshot.forEach((docSnap) => {
       records.push(docSnap.data() as TimetableEntry);
     });
+    timetableCache = records;
     return records;
   } catch (error) {
     handleFirestoreError(error, OperationType.LIST, path);
@@ -743,17 +1022,22 @@ export async function getTimetableEntries(): Promise<TimetableEntry[]> {
 }
 
 export function subscribeToTimetableEntries(callback: (entries: TimetableEntry[]) => void) {
-  const path = 'timetables';
-  const collRef = collection(db, 'timetables');
-  return onSnapshot(collRef, (snapshot) => {
-    const records: TimetableEntry[] = [];
-    snapshot.forEach((docSnap) => {
-      records.push(docSnap.data() as TimetableEntry);
+  timetableSubscribers.add(callback);
+  if (timetableCache) {
+    callback(timetableCache);
+  } else if (!isFetchingTimetable) {
+    isFetchingTimetable = true;
+    getTimetableEntries().then(data => {
+      timetableCache = data;
+      isFetchingTimetable = false;
+      timetableSubscribers.forEach(sub => sub(timetableCache!));
+    }).catch(() => {
+      isFetchingTimetable = false;
     });
-    callback(records);
-  }, (error) => {
-    handleFirestoreError(error, OperationType.LIST, path);
-  });
+  }
+  return () => {
+    timetableSubscribers.delete(callback);
+  };
 }
 
 export async function addTimetableEntry(entry: TimetableEntry): Promise<void> {
@@ -761,6 +1045,12 @@ export async function addTimetableEntry(entry: TimetableEntry): Promise<void> {
   try {
     const docRef = doc(db, 'timetables', entry.timetable_id);
     await setDoc(docRef, entry);
+    if (timetableCache) {
+      const idx = timetableCache.findIndex(e => e.timetable_id === entry.timetable_id);
+      if (idx > -1) timetableCache[idx] = entry;
+      else timetableCache.push(entry);
+      timetableSubscribers.forEach(sub => sub([...timetableCache!]));
+    }
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);
   }
@@ -771,6 +1061,13 @@ export async function updateTimetableEntry(id: string, updates: Partial<Timetabl
   try {
     const docRef = doc(db, 'timetables', id);
     await updateDoc(docRef, updates);
+    if (timetableCache) {
+      const idx = timetableCache.findIndex(e => e.timetable_id === id);
+      if (idx > -1) {
+        timetableCache[idx] = { ...timetableCache[idx], ...updates };
+        timetableSubscribers.forEach(sub => sub([...timetableCache!]));
+      }
+    }
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, path);
   }
@@ -781,6 +1078,10 @@ export async function deleteTimetableEntry(id: string): Promise<void> {
   try {
     const docRef = doc(db, 'timetables', id);
     await deleteDoc(docRef);
+    if (timetableCache) {
+      timetableCache = timetableCache.filter(e => e.timetable_id !== id);
+      timetableSubscribers.forEach(sub => sub([...timetableCache!]));
+    }
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, path);
   }
@@ -795,9 +1096,135 @@ export async function saveTimetableEntriesBatch(entries: TimetableEntry[]): Prom
       batch.set(docRef, entry);
     });
     await batch.commit();
+    if (timetableCache) {
+      entries.forEach(entry => {
+        const idx = timetableCache!.findIndex(e => e.timetable_id === entry.timetable_id);
+        if (idx > -1) timetableCache![idx] = entry;
+        else timetableCache!.push(entry);
+      });
+      timetableSubscribers.forEach(sub => sub([...timetableCache!]));
+    }
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);
     throw error;
   }
 }
 
+// ============================================================================
+// 8. Substitute & Attendance Services
+// ============================================================================
+
+export async function getSubstituteAssignments(): Promise<SubstituteAssignment[]> {
+  if (substituteAssignmentsCache) return substituteAssignmentsCache;
+  const path = 'substitute_assignments';
+  try {
+    const collRef = collection(db, 'substitute_assignments');
+    const qSnapshot = await getDocs(collRef);
+    const records: SubstituteAssignment[] = [];
+    qSnapshot.forEach((docSnap) => {
+      records.push(docSnap.data() as SubstituteAssignment);
+    });
+    substituteAssignmentsCache = records;
+    return records;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.LIST, path);
+    return [];
+  }
+}
+
+export async function addSubstituteAssignment(assignment: SubstituteAssignment): Promise<void> {
+  const path = `substitute_assignments/${assignment.assignment_id}`;
+  try {
+    const docRef = doc(db, 'substitute_assignments', assignment.assignment_id);
+    await setDoc(docRef, assignment);
+    if (substituteAssignmentsCache) {
+      const idx = substituteAssignmentsCache.findIndex(sub => sub.assignment_id === assignment.assignment_id);
+      if (idx > -1) substituteAssignmentsCache[idx] = assignment;
+      else substituteAssignmentsCache.push(assignment);
+      substituteAssignmentsSubscribers.forEach(sub => sub([...substituteAssignmentsCache!]));
+    }
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, path);
+  }
+}
+
+export function subscribeToSubstituteAssignments(callback: (assignments: SubstituteAssignment[]) => void) {
+  substituteAssignmentsSubscribers.add(callback);
+  if (substituteAssignmentsCache) {
+    callback(substituteAssignmentsCache);
+  } else if (!isFetchingSubstituteAssignments) {
+    isFetchingSubstituteAssignments = true;
+    getSubstituteAssignments().then(data => {
+      substituteAssignmentsCache = data;
+      isFetchingSubstituteAssignments = false;
+      substituteAssignmentsSubscribers.forEach(sub => sub(substituteAssignmentsCache!));
+    }).catch(() => {
+      isFetchingSubstituteAssignments = false;
+    });
+  }
+  return () => {
+    substituteAssignmentsSubscribers.delete(callback);
+  };
+}
+
+export async function getAttendanceRecords(): Promise<Attendance[]> {
+  if (attendanceRecordsCache) return attendanceRecordsCache;
+  const path = 'attendance_records';
+  try {
+    const collRef = collection(db, 'attendance_records');
+    const qSnapshot = await getDocs(collRef);
+    const records: Attendance[] = [];
+    qSnapshot.forEach((docSnap) => {
+      records.push(docSnap.data() as Attendance);
+    });
+    attendanceRecordsCache = records;
+    return records;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.LIST, path);
+    return [];
+  }
+}
+
+export async function addAttendance(attendance: Attendance): Promise<void> {
+  const path = `attendance_records/${attendance.attendance_id}`;
+  try {
+    const docRef = doc(db, 'attendance_records', attendance.attendance_id);
+    await setDoc(docRef, attendance);
+    if (attendanceRecordsCache) {
+      const idx = attendanceRecordsCache.findIndex(r => r.attendance_id === attendance.attendance_id);
+      if (idx > -1) attendanceRecordsCache[idx] = attendance;
+      else attendanceRecordsCache.push(attendance);
+      attendanceRecordsSubscribers.forEach(sub => sub([...attendanceRecordsCache!]));
+    }
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, path);
+  }
+}
+
+export function subscribeToAttendanceRecords(callback: (records: Attendance[]) => void) {
+  attendanceRecordsSubscribers.add(callback);
+  if (attendanceRecordsCache) {
+    callback(attendanceRecordsCache);
+  }
+  if (!activeAttendanceRecordsUnsub) {
+    const path = 'attendance_records';
+    const collRef = collection(db, 'attendance_records');
+    activeAttendanceRecordsUnsub = onSnapshot(collRef, (snapshot) => {
+      const records: Attendance[] = [];
+      snapshot.forEach((docSnap) => {
+        records.push(docSnap.data() as Attendance);
+      });
+      attendanceRecordsCache = records;
+      attendanceRecordsSubscribers.forEach(sub => sub(records));
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, path);
+    });
+  }
+  return () => {
+    attendanceRecordsSubscribers.delete(callback);
+    if (attendanceRecordsSubscribers.size === 0 && activeAttendanceRecordsUnsub) {
+      activeAttendanceRecordsUnsub();
+      activeAttendanceRecordsUnsub = null;
+    }
+  };
+}

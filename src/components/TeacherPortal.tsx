@@ -1,11 +1,38 @@
-import React, { useState } from 'react';
-import { Student, AttendanceReport, UserProfile, TimetableEntry } from '../types';
+import React, { useState, useEffect } from 'react';
+import { Student, AttendanceReport, UserProfile, TimetableEntry, SubstituteAssignment, ApprovalRequest } from '../types';
 import { 
   Users, CheckCircle, XCircle, Percent, Plus, Edit, Trash, 
   ArrowLeft, Save, Sparkles, Calendar, Printer, Download, RefreshCw, Check,
-  AlertTriangle, HelpCircle, LogOut, Lock, ArrowRight
+  AlertTriangle, HelpCircle, LogOut, Lock, ArrowRight, CheckSquare, AlertCircle
 } from 'lucide-react';
-import { addStudent, updateStudent, deleteStudent, subscribeToTimetableEntries } from '../services/db';
+import { addStudent, updateStudent, deleteStudent, subscribeToTimetableEntries, subscribeToSubstituteAssignments, addApprovalRequest, subscribeToApprovalRequests } from '../services/db';
+
+const getLocalTodayDate = () => {
+  const d = new Date();
+  const yr = d.getFullYear();
+  const mo = String(d.getMonth() + 1).padStart(2, '0');
+  const da = String(d.getDate()).padStart(2, '0');
+  return `${yr}-${mo}-${da}`;
+};
+
+const todayDate = getLocalTodayDate();
+
+const isTeacherMatch = (entryTeacher: string | undefined | null, currentTeacher: string | undefined | null) => {
+  if (!entryTeacher || !currentTeacher) return false;
+  const t1 = entryTeacher.trim().toLowerCase();
+  const t2 = currentTeacher.trim().toLowerCase();
+  return t1 === t2 || t1.includes(t2) || t2.includes(t1);
+};
+
+const cleanClass = (cls: string | undefined | null) => {
+  if (!cls) return '';
+  return cls.replace('Class ', '').trim();
+};
+
+const cleanSection = (sec: string | undefined | null) => {
+  if (!sec) return '';
+  return sec.replace('Section ', '').trim();
+};
 
 interface TeacherPortalProps {
   students: Student[];
@@ -24,23 +51,82 @@ export default function TeacherPortal({
   attendanceReports = [],
   currentUser = null
 }: TeacherPortalProps) {
-  const [selectedClass, setSelectedClass] = useState<string>(() => {
-    if (currentUser?.role === 'teacher' && currentUser.assigned_class) {
-      return currentUser.assigned_class;
+  const [timetableEntries, setTimetableEntries] = useState<TimetableEntry[]>([]);
+  const [substituteAssignments, setSubstituteAssignments] = useState<SubstituteAssignment[]>([]);
+  const [approvals, setApprovals] = useState<ApprovalRequest[]>([]);
+
+  useEffect(() => {
+    const unsubTimetable = subscribeToTimetableEntries(setTimetableEntries);
+    const unsubSubstitute = subscribeToSubstituteAssignments(setSubstituteAssignments);
+    const unsubApprovals = subscribeToApprovalRequests(setApprovals);
+    return () => {
+      unsubTimetable();
+      unsubSubstitute();
+      unsubApprovals();
+    };
+  }, []);
+
+  const today = new Date().toLocaleDateString('en-US', { weekday: 'long' });
+
+  // Determine if this teacher has an active substitute assignment for Period 1 today
+  const activeSubForTodayP1 = substituteAssignments.find(
+    sub => isTeacherMatch(sub.substitute_teacher_id, currentUser?.name) && sub.date === todayDate && sub.period === 1
+  );
+
+  // Check if original teacher's Period 1 class is substituted out
+  const isP1SubstitutedOut = substituteAssignments.some(
+    sub => isTeacherMatch(sub.original_teacher_id, currentUser?.name) && sub.date === todayDate && sub.period === 1
+  );
+
+  // Get regular timetable entry for today's first period
+  const regFirstPeriodEntry = timetableEntries.find(
+    e => isTeacherMatch(e.teacher_id, currentUser?.name) && e.day_of_week === today && e.period_number === 1
+  );
+
+  // The final resolved first period class/section for attendance marking
+  const firstPeriodEntry = activeSubForTodayP1 
+    ? { class: activeSubForTodayP1.class, section: activeSubForTodayP1.section, subject: activeSubForTodayP1.subject } 
+    : (regFirstPeriodEntry && !isP1SubstitutedOut ? regFirstPeriodEntry : null);
+
+  const [selectedClass, setSelectedClass] = useState<string>('Class 6');
+  const [selectedSection, setSelectedSection] = useState<string>('Section A');
+
+  // Reactively preset the selected class/section when the schedule loads
+  useEffect(() => {
+    if (firstPeriodEntry) {
+      const clsNum = firstPeriodEntry.class.replace('Class ', '').trim();
+      const secLetter = firstPeriodEntry.section.replace('Section ', '').trim();
+      setSelectedClass(`Class ${clsNum}`);
+      setSelectedSection(`Section ${secLetter}`);
     }
-    return 'Class 6';
-  });
-  const [selectedSection, setSelectedSection] = useState<string>(() => {
-    if (currentUser?.role === 'teacher' && currentUser.assigned_section) {
-      return currentUser.assigned_section;
-    }
-    return 'Section A';
-  });
+  }, [firstPeriodEntry]);
+
   const [searchQuery, setSearchQuery] = useState<string>('');
 
-  const isAssigned = !currentUser || currentUser.role !== 'teacher' || (
-    currentUser.assigned_class === selectedClass && currentUser.assigned_section === selectedSection
+  const isSubstituteForSelected = substituteAssignments.some(
+    sub => isTeacherMatch(sub.substitute_teacher_id, currentUser?.name) && 
+           sub.date === todayDate && 
+           cleanClass(sub.class) === cleanClass(selectedClass) && 
+           cleanSection(sub.section) === cleanSection(selectedSection)
   );
+
+  const isOriginalForSelected = timetableEntries.some(
+    e => isTeacherMatch(e.teacher_id, currentUser?.name) && 
+         e.day_of_week === today && 
+         cleanClass(e.class) === cleanClass(selectedClass) && 
+         cleanSection(e.section) === cleanSection(selectedSection) &&
+         !substituteAssignments.some(
+           sub => isTeacherMatch(sub.original_teacher_id, currentUser?.name) && 
+                  sub.date === todayDate && 
+                  sub.period === e.period_number
+         )
+  );
+
+  const isAssigned = !currentUser || currentUser.role !== 'teacher' || (() => {
+    if (!firstPeriodEntry) return false;
+    return cleanClass(selectedClass) === cleanClass(firstPeriodEntry.class) && 
+           cleanSection(selectedSection) === cleanSection(firstPeriodEntry.section);
+  })();
 
   // Tabs and view switching
   const [activeTab, setActiveTab] = useState<'registry' | 'monthly' | 'timetable'>('registry');
@@ -87,23 +173,161 @@ export default function TeacherPortal({
     }
   });
 
-  const getLocalTodayDate = () => {
-    const d = new Date();
-    const yr = d.getFullYear();
-    const mo = String(d.getMonth() + 1).padStart(2, '0');
-    const da = String(d.getDate()).padStart(2, '0');
-    return `${yr}-${mo}-${da}`;
+  const hasApprovedCorrectionForP1 = firstPeriodEntry
+    ? approvals.some(
+        a => a.request_type === 'attendance_correction' &&
+             a.status === 'approved' &&
+             a.request_data?.classStr === firstPeriodEntry.class &&
+             a.request_data?.section === firstPeriodEntry.section &&
+             a.request_data?.date === todayDate
+      )
+    : false;
+
+  const isP1AttendanceSubmitted = firstPeriodEntry 
+    ? (!hasApprovedCorrectionForP1 &&
+       (!!attendanceReports.find(r => r.classStr === firstPeriodEntry.class && r.section === firstPeriodEntry.section && r.date === todayDate) ||
+        !!localSubmittedClassSectionDates[`${firstPeriodEntry.class}_${firstPeriodEntry.section}_${todayDate}`]))
+    : false;
+
+  const activeCorrectionRequest = firstPeriodEntry
+    ? approvals.find(
+        a => a.request_type === 'attendance_correction' &&
+             a.request_data?.classStr === firstPeriodEntry.class &&
+             a.request_data?.section === firstPeriodEntry.section &&
+             a.request_data?.date === todayDate
+      )
+    : null;
+
+  useEffect(() => {
+    if (firstPeriodEntry) {
+      const key = `${firstPeriodEntry.class}_${firstPeriodEntry.section}_${todayDate}`;
+      const hasApprovedCorrection = approvals.some(
+        a => a.request_type === 'attendance_correction' &&
+             a.status === 'approved' &&
+             a.request_data?.classStr === firstPeriodEntry.class &&
+             a.request_data?.section === firstPeriodEntry.section &&
+             a.request_data?.date === todayDate
+      );
+      if (hasApprovedCorrection && localSubmittedClassSectionDates[key]) {
+        setLocalSubmittedClassSectionDates(prev => {
+          const updated = { ...prev };
+          delete updated[key];
+          try {
+            localStorage.setItem('edumeal_submitted_dates', JSON.stringify(updated));
+          } catch (e) {
+            console.error(e);
+          }
+          return updated;
+        });
+      }
+    }
+  }, [approvals, firstPeriodEntry, localSubmittedClassSectionDates]);
+
+  const [requestLoading, setRequestLoading] = useState(false);
+
+  const handleRequestCorrection = async (classStr: string, section: string) => {
+    if (requestLoading) return;
+    setRequestLoading(true);
+    try {
+      const correctionRequest: ApprovalRequest = {
+        request_id: `corr_${classStr}_${section}_${todayDate}_${Date.now()}`,
+        request_type: 'attendance_correction',
+        requested_by: currentUser?.name || 'Teacher',
+        requested_by_uid: currentUser?.uid || '',
+        request_data: {
+          classStr,
+          section,
+          date: todayDate,
+          is_attendance_correction: true,
+          reason: `Attendance correction requested by teacher ${currentUser?.name} for ${classStr}-${section} on ${todayDate}.`
+        },
+        status: 'pending',
+        createdAt: new Date().toISOString()
+      };
+      await addApprovalRequest(correctionRequest);
+    } catch (err: any) {
+      console.error('Failed to submit correction request:', err);
+    } finally {
+      setRequestLoading(false);
+    }
   };
 
-  const todayDate = getLocalTodayDate();
+  const getTodaySchedule = () => {
+    const schedule = [];
+    for (let pNum = 1; pNum <= 7; pNum++) {
+      const subAssign = substituteAssignments.find(
+        sub => isTeacherMatch(sub.substitute_teacher_id, currentUser?.name) && 
+               sub.date === todayDate && 
+               sub.period === pNum
+      );
+
+      if (subAssign) {
+        schedule.push({
+          period: pNum,
+          class: subAssign.class,
+          section: subAssign.section,
+          subject: subAssign.subject,
+          status: 'Substitute',
+          originalTeacher: subAssign.original_teacher_id,
+          assignmentDate: subAssign.date,
+          assignedBy: subAssign.assigned_by,
+        });
+        continue;
+      }
+
+      const regEntry = timetableEntries.find(
+        e => isTeacherMatch(e.teacher_id, currentUser?.name) && 
+             e.day_of_week === today && 
+             e.period_number === pNum
+      );
+
+      if (regEntry) {
+        const isSubbedOut = substituteAssignments.some(
+          sub => isTeacherMatch(sub.original_teacher_id, currentUser?.name) && 
+                 sub.date === todayDate && 
+                 sub.period === pNum
+        );
+
+        if (isSubbedOut) {
+          const subDetails = substituteAssignments.find(
+            sub => isTeacherMatch(sub.original_teacher_id, currentUser?.name) && 
+                   sub.date === todayDate && 
+                   sub.period === pNum
+          );
+          schedule.push({
+            period: pNum,
+            class: regEntry.class,
+            section: regEntry.section,
+            subject: regEntry.subject,
+            status: 'Substituted Out',
+            substituteTeacher: subDetails?.substitute_teacher_id || 'Assigned',
+            assignmentDate: todayDate,
+          });
+        } else {
+          schedule.push({
+            period: pNum,
+            class: regEntry.class,
+            section: regEntry.section,
+            subject: regEntry.subject,
+            status: 'Regular',
+          });
+        }
+      } else {
+        schedule.push({
+          period: pNum,
+          class: 'Free',
+          section: '',
+          subject: '-',
+          status: '-',
+        });
+      }
+    }
+    return schedule;
+  };
+
+  const todaySchedule = getTodaySchedule();
+
   const [attendanceDate, setAttendanceDate] = useState<string>(todayDate);
-
-  const [timetableEntries, setTimetableEntries] = useState<TimetableEntry[]>([]);
-
-  React.useEffect(() => {
-    const unsub = subscribeToTimetableEntries(setTimetableEntries);
-    return () => unsub();
-  }, []);
 
   const getPeriodTimes = (pNum: number) => {
     const times = [
@@ -308,7 +532,10 @@ export default function TeacherPortal({
 
   const handleStatusClick = (studentId: string) => {
     if (!isAssigned) {
-      showCustomAlert("Unauthorized Action", `You are only authorized to post and edit attendance for your assigned class (${currentUser?.assigned_class} - ${currentUser?.assigned_section}).`);
+      const msg = firstPeriodEntry 
+        ? `You are only authorized to post and edit attendance for your assigned P1 class (${firstPeriodEntry.class} - ${firstPeriodEntry.section}).`
+        : `No attendance is assigned to you for the first period today.`;
+      showCustomAlert("Unauthorized Action", msg);
       return;
     }
     const current = todayClickStatus[studentId];
@@ -335,7 +562,10 @@ export default function TeacherPortal({
 
   const handleEditHolidayToday = () => {
     if (!isAssigned) {
-      showCustomAlert("Unauthorized Action", `You are only authorized to configure holiday settings for your assigned class (${currentUser?.assigned_class} - ${currentUser?.assigned_section}).`);
+      const msg = firstPeriodEntry 
+        ? `You are only authorized to configure holiday settings for your assigned P1 class (${firstPeriodEntry.class} - ${firstPeriodEntry.section}).`
+        : `No attendance is assigned to you for the first period today.`;
+      showCustomAlert("Unauthorized Action", msg);
       return;
     }
     showCustomConfirm(
@@ -582,7 +812,10 @@ export default function TeacherPortal({
 
   const handleSubmit = async () => {
     if (!isAssigned) {
-      showCustomAlert("Unauthorized Action", `You are only authorized to post and edit attendance for your assigned class (${currentUser?.assigned_class} - ${currentUser?.assigned_section}).`);
+      const msg = firstPeriodEntry 
+        ? `You are only authorized to post and edit attendance for your assigned P1 class (${firstPeriodEntry.class} - ${firstPeriodEntry.section}).`
+        : `No attendance is assigned to you for the first period today.`;
+      showCustomAlert("Unauthorized Action", msg);
       return;
     }
     const realDateInfo = getIsRealDateSundayOrHoliday(attendanceDate);
@@ -1084,18 +1317,85 @@ export default function TeacherPortal({
           </button>
           <span className="text-secondary font-extrabold uppercase tracking-widest text-xs">Today's Attendance</span>
           <h2 className="font-headline-lg text-2xl md:text-3xl font-bold text-primary mt-1">Classroom Registry</h2>
+
+          {firstPeriodEntry && (
+            <div className="mt-3 text-xs text-secondary bg-surface-container px-3.5 py-2.5 rounded-xl border border-outline-variant w-fit flex flex-wrap items-center gap-3 animate-fade-in">
+              <span className="font-bold text-primary">First Period P1 Class Today:</span>
+              <span className="bg-primary/10 text-primary px-2 py-0.5 rounded-md font-extrabold">{firstPeriodEntry.class}</span>
+              <span className="bg-primary/10 text-primary px-2 py-0.5 rounded-md font-extrabold">{firstPeriodEntry.section}</span>
+              <span className="text-on-surface-variant font-medium">Subject: <strong className="text-primary font-bold">{firstPeriodEntry.subject || 'Mathematics'}</strong></span>
+            </div>
+          )}
           
           {!isAssigned && (
             <div className="mt-4 bg-amber-50 border border-amber-200 text-amber-800 p-3.5 rounded-xl text-xs flex items-center gap-2.5 shadow-3xs animate-fade-in">
               <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0 animate-pulse" />
               <div>
-                <span className="font-bold">Read-Only Mode:</span> You are only authorized to post and modify attendance for your assigned class (<strong>{currentUser?.assigned_class} - {currentUser?.assigned_section}</strong>).
+                <span className="font-bold">Read-Only Mode:</span> 
+                {firstPeriodEntry ? (
+                  <span> You are only authorized to post and modify attendance for your assigned P1 class (<strong>{firstPeriodEntry.class} - {firstPeriodEntry.section}</strong>).</span>
+                ) : (
+                  <span> You do not have an assigned first period class today.</span>
+                )}
               </div>
             </div>
           )}
 
-          <p className="text-on-surface-variant text-sm mt-1">
-            Register students and submit accurate numbers for Mid-Day Meal planning.
+          {firstPeriodEntry ? (
+            !isP1AttendanceSubmitted ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedClass(firstPeriodEntry.class);
+                  setSelectedSection(firstPeriodEntry.section);
+                  setActiveTab('registry');
+                }}
+                className="mt-4 bg-primary hover:bg-primary-hover text-white font-extrabold text-xs py-2.5 px-5 rounded-xl shadow-xs transition-all active:scale-95 cursor-pointer flex items-center gap-2"
+              >
+                <CheckSquare className="w-4 h-4" />
+                <span>Mark Attendance ({firstPeriodEntry.class}-{firstPeriodEntry.section})</span>
+              </button>
+            ) : (
+              <div className="mt-4 flex flex-wrap items-center gap-3">
+                <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 p-3 rounded-xl text-xs flex items-center gap-2 shadow-3xs w-fit font-bold">
+                  <Check className="w-4 h-4 text-emerald-600" />
+                  <span>Attendance has been successfully locked and submitted for today ({firstPeriodEntry.class}-{firstPeriodEntry.section}).</span>
+                </div>
+                {activeCorrectionRequest ? (
+                  <div className={`p-3 rounded-xl text-xs flex items-center gap-2 border w-fit font-bold ${
+                    activeCorrectionRequest.status === 'pending'
+                      ? 'bg-amber-50 border-amber-200 text-amber-800'
+                      : activeCorrectionRequest.status === 'approved'
+                      ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                      : 'bg-rose-50 border-rose-200 text-rose-800'
+                  }`}>
+                    {activeCorrectionRequest.status === 'pending' && <RefreshCw className="w-4 h-4 text-amber-600 animate-spin" />}
+                    {activeCorrectionRequest.status === 'approved' && <Check className="w-4 h-4 text-emerald-600" />}
+                    {activeCorrectionRequest.status === 'rejected' && <XCircle className="w-4 h-4 text-rose-600" />}
+                    <span>Correction Request: <strong className="capitalize">{activeCorrectionRequest.status}</strong></span>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => handleRequestCorrection(firstPeriodEntry.class, firstPeriodEntry.section)}
+                    disabled={requestLoading}
+                    className="bg-neutral-800 hover:bg-neutral-900 text-white font-extrabold text-xs py-2.5 px-4 rounded-xl shadow-xs transition-all active:scale-95 cursor-pointer flex items-center gap-1.5"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${requestLoading ? 'animate-spin' : ''}`} />
+                    <span>Request Correction</span>
+                  </button>
+                )}
+              </div>
+            )
+          ) : (
+            <div className="mt-4 text-xs font-semibold text-rose-800 bg-rose-50 border border-rose-100 p-3 rounded-xl flex items-center gap-2 w-fit">
+              <AlertCircle className="w-4 h-4 text-rose-500" />
+              <span>No attendance is assigned to you for the first period today.</span>
+            </div>
+          )}
+
+          <p className="text-on-surface-variant text-xs mt-3 leading-relaxed max-w-xl">
+            Register students and submit accurate numbers for Mid-Day Meal planning. When subbed-in as a substitute for Period 1, you can mark attendance for that class.
           </p>
         </div>
 
@@ -1129,6 +1429,74 @@ export default function TeacherPortal({
         </div>
       </div>
 
+      {/* Today's Schedule Bento Card */}
+      <div className="bg-white p-5 rounded-2xl border border-outline-variant shadow-2xs space-y-4">
+        <div className="flex items-center justify-between border-b border-outline-variant pb-3 text-primary">
+          <div className="flex items-center gap-2">
+            <Calendar className="w-5 h-5 text-primary" />
+            <h3 className="font-bold text-sm">Today's Teaching & Reassignment Schedule ({todayDate} - {today})</h3>
+          </div>
+          <span className="text-[10px] font-extrabold text-secondary bg-surface-container px-2.5 py-1 rounded-full uppercase tracking-wider">
+            Active Day: {today}
+          </span>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full border-collapse text-xs text-center">
+            <thead>
+              <tr className="bg-surface-container border-b border-outline-variant text-secondary uppercase tracking-wider text-[10px] font-extrabold">
+                <th className="p-2.5 text-left">Period</th>
+                <th className="p-2.5">Class</th>
+                <th className="p-2.5">Subject</th>
+                <th className="p-2.5">Status</th>
+                <th className="p-2.5 text-right">Details</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-outline-variant">
+              {todaySchedule.map((item) => (
+                <tr key={item.period} className="hover:bg-neutral-50/50">
+                  <td className="p-2.5 text-left font-bold text-neutral-800">
+                    P{item.period}
+                    <div className="text-[9px] text-neutral-400 font-normal">{getPeriodTimes(item.period).start} - {getPeriodTimes(item.period).end}</div>
+                  </td>
+                  <td className="p-2.5 font-bold text-primary">
+                    {item.class !== 'Free' ? `${item.class}${item.section ? `-${item.section}` : ''}` : 'Free'}
+                  </td>
+                  <td className="p-2.5 text-neutral-600 font-medium">{item.subject}</td>
+                  <td className="p-2.5">
+                    <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-extrabold ${
+                      item.status === 'Regular' 
+                        ? 'bg-primary/10 text-primary' 
+                        : item.status === 'Substitute' 
+                        ? 'bg-amber-500/10 text-amber-700' 
+                        : item.status === 'Substituted Out' 
+                        ? 'bg-rose-500/10 text-rose-700' 
+                        : 'bg-neutral-100 text-neutral-400'
+                    }`}>
+                      {item.status}
+                    </span>
+                  </td>
+                  <td className="p-2.5 text-right text-[10px] text-neutral-500 font-semibold">
+                    {item.status === 'Substitute' && (
+                      <div className="space-y-0.5">
+                        <div><span className="text-neutral-400">Original:</span> <strong className="text-neutral-700">{item.originalTeacher}</strong></div>
+                        <div className="text-[9px] text-neutral-400">Assigned: {item.assignmentDate}</div>
+                      </div>
+                    )}
+                    {item.status === 'Substituted Out' && (
+                      <div className="space-y-0.5">
+                        <div><span className="text-neutral-400">Subbed Out To:</span> <strong className="text-neutral-700">{item.substituteTeacher}</strong></div>
+                        <div className="text-[9px] text-neutral-400">Assigned: {item.assignmentDate}</div>
+                      </div>
+                    )}
+                    {item.status !== 'Substitute' && item.status !== 'Substituted Out' && '-'}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
       {/* View Tabs */}
       {!isAssigned ? (
         <div className="bg-white p-8 rounded-2xl border border-outline-variant shadow-2xs text-center max-w-xl mx-auto my-8 space-y-6 animate-fade-in">
@@ -1140,22 +1508,28 @@ export default function TeacherPortal({
             <p className="text-xs sm:text-sm text-on-surface-variant leading-relaxed">
               You are not authorized to view student details or mark attendance for <strong className="text-primary">{selectedClass} - {selectedSection}</strong>.
             </p>
-            <p className="text-[11px] text-on-surface-variant/80 italic">
-              Your assigned class is <strong>{currentUser?.assigned_class || 'None'} - {currentUser?.assigned_section || 'None'}</strong>.
-            </p>
+            {firstPeriodEntry ? (
+              <p className="text-[11px] text-on-surface-variant/80 italic">
+                You are only authorized to mark attendance for your assigned P1 class: <strong>{firstPeriodEntry.class} - {firstPeriodEntry.section}</strong>.
+              </p>
+            ) : (
+              <p className="text-[11px] text-on-surface-variant/80 italic">
+                You do not have any assigned First Period class today. Attendance marking is disabled.
+              </p>
+            )}
           </div>
-          {currentUser?.assigned_class && currentUser?.assigned_section && (
+          {firstPeriodEntry && (
             <div className="pt-2">
               <button
                 type="button"
                 onClick={() => {
-                  setSelectedClass(currentUser.assigned_class || 'Class 6');
-                  setSelectedSection(currentUser.assigned_section || 'Section A');
+                  setSelectedClass(firstPeriodEntry.class);
+                  setSelectedSection(firstPeriodEntry.section);
                 }}
                 className="inline-flex items-center gap-2 bg-primary hover:bg-primary-hover text-white text-xs font-extrabold px-5 py-2.5 rounded-xl shadow-xs transition-all active:scale-95 cursor-pointer"
               >
                 <ArrowRight className="w-4 h-4" />
-                <span>Go to My Assigned Class</span>
+                <span>Go to My P1 Class ({firstPeriodEntry.class} - {firstPeriodEntry.section})</span>
               </button>
             </div>
           )}
@@ -1823,25 +2197,61 @@ export default function TeacherPortal({
                       {day}
                     </td>
                     {[1, 2].map(pNum => {
-                      const entry = timetableEntries.find(e => 
-                        e.day_of_week === day && 
-                        e.period_number === pNum && 
-                        e.teacher_id === currentUser?.name
-                      );
-                      const isFree = !entry || entry.subject === 'Free Period' || entry.teacher_id === 'None';
-                      const classNameStr = isFree ? 'Free' : (entry.class && entry.section ? `${entry.class}-${entry.section}` : entry.subject);
-                      const subjectStr = isFree ? '' : entry.subject;
-                      
+                      // Resolve cell info taking reassignments into account
+                      const isTodayDay = day === today;
+                      let isFree = true;
+                      let classNameStr = 'Free';
+                      let subjectStr = '';
+                      let cellClass = 'bg-neutral-50/50 text-neutral-400';
+
+                      if (isTodayDay) {
+                        const subAssign = substituteAssignments.find(
+                          sub => isTeacherMatch(sub.substitute_teacher_id, currentUser?.name) && sub.date === todayDate && sub.period === pNum
+                        );
+                        if (subAssign) {
+                          isFree = false;
+                          classNameStr = `${subAssign.class}-${subAssign.section}`;
+                          subjectStr = `${subAssign.subject}`;
+                          cellClass = 'bg-amber-500/10 border-l-4 border-l-amber-500 font-semibold text-amber-900';
+                        } else {
+                          const isSubbedOut = substituteAssignments.some(
+                            sub => isTeacherMatch(sub.original_teacher_id, currentUser?.name) && sub.date === todayDate && sub.period === pNum
+                          );
+                          if (isSubbedOut) {
+                            const origEntry = timetableEntries.find(
+                              e => e.day_of_week === day && e.period_number === pNum && isTeacherMatch(e.teacher_id, currentUser?.name)
+                            );
+                            isFree = false;
+                            classNameStr = origEntry ? `${origEntry.class}-${origEntry.section}` : 'Free';
+                            subjectStr = 'Subbed Out';
+                            cellClass = 'bg-rose-50 border-l-4 border-l-rose-300 text-rose-500 line-through';
+                          } else {
+                            const entry = timetableEntries.find(
+                              e => e.day_of_week === day && e.period_number === pNum && isTeacherMatch(e.teacher_id, currentUser?.name)
+                            );
+                            isFree = !entry || entry.subject === 'Free Period' || entry.teacher_id === 'None';
+                            classNameStr = isFree ? 'Free' : (entry.class && entry.section ? `${entry.class}-${entry.section}` : entry.subject);
+                            subjectStr = isFree ? '' : entry.subject;
+                            cellClass = isFree ? 'bg-neutral-50/50 text-neutral-400' : 'bg-primary/5 font-semibold text-primary';
+                          }
+                        }
+                      } else {
+                        const entry = timetableEntries.find(
+                          e => e.day_of_week === day && e.period_number === pNum && isTeacherMatch(e.teacher_id, currentUser?.name)
+                        );
+                        isFree = !entry || entry.subject === 'Free Period' || entry.teacher_id === 'None';
+                        classNameStr = isFree ? 'Free' : (entry.class && entry.section ? `${entry.class}-${entry.section}` : entry.subject);
+                        subjectStr = isFree ? '' : entry.subject;
+                        cellClass = isFree ? 'bg-neutral-50/50 text-neutral-400' : 'bg-primary/5 font-semibold text-primary';
+                      }
+
                       return (
-                        <td 
-                          key={pNum} 
-                          className={`p-3 border border-outline-variant transition-all ${isFree ? 'bg-neutral-50/50 text-neutral-400' : 'bg-primary/5 font-semibold text-primary'}`}
-                        >
+                        <td key={pNum} className={`p-3 border border-outline-variant transition-all ${cellClass}`}>
                           <div className="font-bold text-sm">
                             {classNameStr}
                           </div>
                           {!isFree && subjectStr && subjectStr !== classNameStr && (
-                            <div className="text-[10px] text-on-surface-variant font-medium mt-0.5">
+                            <div className="text-[10px] opacity-80 font-medium mt-0.5">
                               {subjectStr}
                             </div>
                           )}
@@ -1855,25 +2265,60 @@ export default function TeacherPortal({
                     </td>
 
                     {[3, 4].map(pNum => {
-                      const entry = timetableEntries.find(e => 
-                        e.day_of_week === day && 
-                        e.period_number === pNum && 
-                        e.teacher_id === currentUser?.name
-                      );
-                      const isFree = !entry || entry.subject === 'Free Period' || entry.teacher_id === 'None';
-                      const classNameStr = isFree ? 'Free' : (entry.class && entry.section ? `${entry.class}-${entry.section}` : entry.subject);
-                      const subjectStr = isFree ? '' : entry.subject;
-                      
+                      const isTodayDay = day === today;
+                      let isFree = true;
+                      let classNameStr = 'Free';
+                      let subjectStr = '';
+                      let cellClass = 'bg-neutral-50/50 text-neutral-400';
+
+                      if (isTodayDay) {
+                        const subAssign = substituteAssignments.find(
+                          sub => isTeacherMatch(sub.substitute_teacher_id, currentUser?.name) && sub.date === todayDate && sub.period === pNum
+                        );
+                        if (subAssign) {
+                          isFree = false;
+                          classNameStr = `${subAssign.class}-${subAssign.section}`;
+                          subjectStr = `${subAssign.subject}`;
+                          cellClass = 'bg-amber-500/10 border-l-4 border-l-amber-500 font-semibold text-amber-900';
+                        } else {
+                          const isSubbedOut = substituteAssignments.some(
+                            sub => isTeacherMatch(sub.original_teacher_id, currentUser?.name) && sub.date === todayDate && sub.period === pNum
+                          );
+                          if (isSubbedOut) {
+                            const origEntry = timetableEntries.find(
+                              e => e.day_of_week === day && e.period_number === pNum && isTeacherMatch(e.teacher_id, currentUser?.name)
+                            );
+                            isFree = false;
+                            classNameStr = origEntry ? `${origEntry.class}-${origEntry.section}` : 'Free';
+                            subjectStr = 'Subbed Out';
+                            cellClass = 'bg-rose-50 border-l-4 border-l-rose-300 text-rose-500 line-through';
+                          } else {
+                            const entry = timetableEntries.find(
+                              e => e.day_of_week === day && e.period_number === pNum && isTeacherMatch(e.teacher_id, currentUser?.name)
+                            );
+                            isFree = !entry || entry.subject === 'Free Period' || entry.teacher_id === 'None';
+                            classNameStr = isFree ? 'Free' : (entry.class && entry.section ? `${entry.class}-${entry.section}` : entry.subject);
+                            subjectStr = isFree ? '' : entry.subject;
+                            cellClass = isFree ? 'bg-neutral-50/50 text-neutral-400' : 'bg-primary/5 font-semibold text-primary';
+                          }
+                        }
+                      } else {
+                        const entry = timetableEntries.find(
+                          e => e.day_of_week === day && e.period_number === pNum && isTeacherMatch(e.teacher_id, currentUser?.name)
+                        );
+                        isFree = !entry || entry.subject === 'Free Period' || entry.teacher_id === 'None';
+                        classNameStr = isFree ? 'Free' : (entry.class && entry.section ? `${entry.class}-${entry.section}` : entry.subject);
+                        subjectStr = isFree ? '' : entry.subject;
+                        cellClass = isFree ? 'bg-neutral-50/50 text-neutral-400' : 'bg-primary/5 font-semibold text-primary';
+                      }
+
                       return (
-                        <td 
-                          key={pNum} 
-                          className={`p-3 border border-outline-variant transition-all ${isFree ? 'bg-neutral-50/50 text-neutral-400' : 'bg-primary/5 font-semibold text-primary'}`}
-                        >
+                        <td key={pNum} className={`p-3 border border-outline-variant transition-all ${cellClass}`}>
                           <div className="font-bold text-sm">
                             {classNameStr}
                           </div>
                           {!isFree && subjectStr && subjectStr !== classNameStr && (
-                            <div className="text-[10px] text-on-surface-variant font-medium mt-0.5">
+                            <div className="text-[10px] opacity-80 font-medium mt-0.5">
                               {subjectStr}
                             </div>
                           )}
@@ -1887,25 +2332,60 @@ export default function TeacherPortal({
                     </td>
 
                     {[5, 6, 7].map(pNum => {
-                      const entry = timetableEntries.find(e => 
-                        e.day_of_week === day && 
-                        e.period_number === pNum && 
-                        e.teacher_id === currentUser?.name
-                      );
-                      const isFree = !entry || entry.subject === 'Free Period' || entry.teacher_id === 'None';
-                      const classNameStr = isFree ? 'Free' : (entry.class && entry.section ? `${entry.class}-${entry.section}` : entry.subject);
-                      const subjectStr = isFree ? '' : entry.subject;
-                      
+                      const isTodayDay = day === today;
+                      let isFree = true;
+                      let classNameStr = 'Free';
+                      let subjectStr = '';
+                      let cellClass = 'bg-neutral-50/50 text-neutral-400';
+
+                      if (isTodayDay) {
+                        const subAssign = substituteAssignments.find(
+                          sub => isTeacherMatch(sub.substitute_teacher_id, currentUser?.name) && sub.date === todayDate && sub.period === pNum
+                        );
+                        if (subAssign) {
+                          isFree = false;
+                          classNameStr = `${subAssign.class}-${subAssign.section}`;
+                          subjectStr = `${subAssign.subject}`;
+                          cellClass = 'bg-amber-500/10 border-l-4 border-l-amber-500 font-semibold text-amber-900';
+                        } else {
+                          const isSubbedOut = substituteAssignments.some(
+                            sub => isTeacherMatch(sub.original_teacher_id, currentUser?.name) && sub.date === todayDate && sub.period === pNum
+                          );
+                          if (isSubbedOut) {
+                            const origEntry = timetableEntries.find(
+                              e => e.day_of_week === day && e.period_number === pNum && isTeacherMatch(e.teacher_id, currentUser?.name)
+                            );
+                            isFree = false;
+                            classNameStr = origEntry ? `${origEntry.class}-${origEntry.section}` : 'Free';
+                            subjectStr = 'Subbed Out';
+                            cellClass = 'bg-rose-50 border-l-4 border-l-rose-300 text-rose-500 line-through';
+                          } else {
+                            const entry = timetableEntries.find(
+                              e => e.day_of_week === day && e.period_number === pNum && isTeacherMatch(e.teacher_id, currentUser?.name)
+                            );
+                            isFree = !entry || entry.subject === 'Free Period' || entry.teacher_id === 'None';
+                            classNameStr = isFree ? 'Free' : (entry.class && entry.section ? `${entry.class}-${entry.section}` : entry.subject);
+                            subjectStr = isFree ? '' : entry.subject;
+                            cellClass = isFree ? 'bg-neutral-50/50 text-neutral-400' : 'bg-primary/5 font-semibold text-primary';
+                          }
+                        }
+                      } else {
+                        const entry = timetableEntries.find(
+                          e => e.day_of_week === day && e.period_number === pNum && isTeacherMatch(e.teacher_id, currentUser?.name)
+                        );
+                        isFree = !entry || entry.subject === 'Free Period' || entry.teacher_id === 'None';
+                        classNameStr = isFree ? 'Free' : (entry.class && entry.section ? `${entry.class}-${entry.section}` : entry.subject);
+                        subjectStr = isFree ? '' : entry.subject;
+                        cellClass = isFree ? 'bg-neutral-50/50 text-neutral-400' : 'bg-primary/5 font-semibold text-primary';
+                      }
+
                       return (
-                        <td 
-                          key={pNum} 
-                          className={`p-3 border border-outline-variant transition-all ${isFree ? 'bg-neutral-50/50 text-neutral-400' : 'bg-primary/5 font-semibold text-primary'}`}
-                        >
+                        <td key={pNum} className={`p-3 border border-outline-variant transition-all ${cellClass}`}>
                           <div className="font-bold text-sm">
                             {classNameStr}
                           </div>
                           {!isFree && subjectStr && subjectStr !== classNameStr && (
-                            <div className="text-[10px] text-on-surface-variant font-medium mt-0.5">
+                            <div className="text-[10px] opacity-80 font-medium mt-0.5">
                               {subjectStr}
                             </div>
                           )}

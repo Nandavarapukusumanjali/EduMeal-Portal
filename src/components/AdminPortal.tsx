@@ -25,7 +25,7 @@ import { UserProfile, ApprovalRequest, AuditLog } from '../types';
 import { 
   subscribeToUsers, subscribeToApprovalRequests, updateApprovalRequest, 
   subscribeToAuditLogs, saveUserProfile, addAuditLog, updateStudent,
-  updateUserProfile, deleteUserProfile 
+  updateUserProfile, deleteUserProfile, deleteAttendanceReport 
 } from '../services/db';
 import { createAuthUserSecondary, updateAuthUserCredentials, getEmailForUser, getUsernameFromEmail } from '../services/auth';
 
@@ -136,6 +136,11 @@ export default function AdminPortal({
           assigned_section,
           updated_at: new Date().toISOString()
         });
+      }
+      else if (req.request_type === 'attendance_correction') {
+        const { classStr, section, date } = req.request_data;
+        const reportId = `${classStr}_${section}_${date}`;
+        await deleteAttendanceReport(reportId);
       }
       else if (req.request_type === 'transfer_student') {
         const { student_id, target_section } = req.request_data;
@@ -2556,6 +2561,13 @@ export default function AdminPortal({
                           ) : req.request_type === 'assign_teacher' ? (
                             <div>
                               Assign teacher <strong>{req.request_data.teacher_name}</strong> to {req.request_data.assigned_class} - {req.request_data.assigned_section}
+                            </div>
+                          ) : req.request_type === 'attendance_correction' ? (
+                            <div className="space-y-1 bg-amber-50 p-3 rounded-xl border border-amber-200 text-xs">
+                              <p className="font-bold text-amber-800">Attendance Correction Request</p>
+                              <p>Class: <strong>{req.request_data.classStr} - {req.request_data.section}</strong></p>
+                              <p className="text-[10px] text-on-surface-variant">Date: <strong>{req.request_data.date}</strong></p>
+                              <p className="text-[10px] text-amber-700 italic mt-1 bg-white p-1.5 rounded-lg border border-amber-100 font-medium">"{req.request_data.reason}"</p>
                             </div>
                           ) : req.request_type === 'transfer_student' ? (
                             <div>

@@ -24,7 +24,7 @@ export interface UserProfile {
 
 export interface ApprovalRequest {
   request_id: string;
-  request_type: 'create_teacher' | 'create_supervisor' | 'create_student' | 'bulk_students' | 'assign_teacher' | 'transfer_student' | 'deactivate_user' | 'delete_user' | 'other';
+  request_type: 'create_teacher' | 'create_supervisor' | 'create_student' | 'bulk_students' | 'assign_teacher' | 'transfer_student' | 'deactivate_user' | 'delete_user' | 'attendance_correction' | 'other';
   requested_by: string; // coordinator username / name
   requested_by_uid: string;
   request_data: any;
@@ -72,6 +72,31 @@ export interface TimetableEntry {
   approved_by?: string;
   approved_at?: string;
   updated_at: string;
+}
+
+export interface SubstituteAssignment {
+  assignment_id: string;
+  date: string; // YYYY-MM-DD
+  period: number;
+  class: string;
+  section: string;
+  subject: string;
+  original_teacher_id: string;
+  substitute_teacher_id: string;
+  assigned_by: string;
+  assigned_at: string; // ISO timestamp
+}
+
+export interface Attendance {
+  attendance_id: string;
+  date: string; // YYYY-MM-DD
+  period: number;
+  class: string;
+  section: string;
+  subject: string;
+  teacher_id: string; // The teacher who submitted (original or substitute)
+  student_details: { [studentId: string]: 'P' | 'A' };
+  submitted_at: string; // ISO timestamp
 }
 
 export interface MealItem {

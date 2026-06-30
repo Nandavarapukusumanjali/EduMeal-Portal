@@ -75,7 +75,7 @@ export default function WelcomePortal({ onSelectRole }: WelcomePortalProps) {
     switch (selectedGateRole) {
       case 'student':
         return {
-          title: 'Student Attendance Feedback',
+          title: 'Student Feedback',
           subtitle: 'Use your Roll Number and Date of Birth (YYYY-MM-DD) to access your attendance profile.',
           themeColor: 'border-primary text-primary bg-primary/5',
           bannerColor: 'bg-primary',
@@ -337,17 +337,6 @@ export default function WelcomePortal({ onSelectRole }: WelcomePortalProps) {
             {/* Login form body */}
             <form onSubmit={handleLoginSubmit} className="p-6 space-y-4">
               
-              {/* Tab Switcher / Sign Up disabled per secure government guidelines */}
-              <div className="bg-surface-container rounded-xl p-3 border border-outline-variant text-center space-y-1">
-                <p className="text-xs font-extrabold text-primary flex items-center justify-center gap-1.5">
-                  <Lock className="w-3.5 h-3.5" />
-                  Authorized Staff Sign-In Only
-                </p>
-                <p className="text-[10px] text-on-surface-variant font-light">
-                  Public registrations are disabled. Contact the Headmaster to initialize or recover credential channels.
-                </p>
-              </div>
-
               <p className="text-xs text-on-surface-variant font-light leading-relaxed bg-surface-container px-3.5 py-3 rounded-xl border border-outline-variant">
                 {loginMeta?.subtitle}
               </p>
