@@ -15,24 +15,9 @@ const getLocalTodayDate = () => {
   return `${yr}-${mo}-${da}`;
 };
 
+import { isTeacherMatch, cleanClass, cleanSection } from '../utils';
+
 const todayDate = getLocalTodayDate();
-
-const isTeacherMatch = (entryTeacher: string | undefined | null, currentTeacher: string | undefined | null) => {
-  if (!entryTeacher || !currentTeacher) return false;
-  const t1 = entryTeacher.trim().toLowerCase();
-  const t2 = currentTeacher.trim().toLowerCase();
-  return t1 === t2 || t1.includes(t2) || t2.includes(t1);
-};
-
-const cleanClass = (cls: string | undefined | null) => {
-  if (!cls) return '';
-  return cls.replace('Class ', '').trim();
-};
-
-const cleanSection = (sec: string | undefined | null) => {
-  if (!sec) return '';
-  return sec.replace('Section ', '').trim();
-};
 
 interface TeacherPortalProps {
   students: Student[];
@@ -129,15 +114,8 @@ export default function TeacherPortal({
   })();
 
   // Tabs and view switching
-  const [activeTab, setActiveTab] = useState<'registry' | 'monthly' | 'timetable'>('registry');
+  const [activeTab, setActiveTab] = useState<'registry' | 'timetable'>('registry');
 
-  // DEBUGGING: Log attendance reports when switching tabs
-  React.useEffect(() => {
-    if (activeTab === 'monthly') {
-      console.log('DEBUG: Monthly tab active. Attendance reports count:', attendanceReports.length);
-      console.log('DEBUG: Attendance reports:', attendanceReports);
-    }
-  }, [activeTab, attendanceReports]);
 
   // Month and Year selection for Monthly Attendance Sheet view
   const [selectedMonth, setSelectedMonth] = useState<number>(5); // Default: June (index 5)
@@ -1547,17 +1525,6 @@ export default function TeacherPortal({
         >
           <Users className="w-4 h-4" />
           <span>Today's Daily Roll Call</span>
-        </button>
-        <button 
-          onClick={() => setActiveTab('monthly')}
-          className={`pb-3 text-sm font-bold border-b-2 transition-all flex items-center gap-2 ${
-            activeTab === 'monthly' 
-              ? 'border-primary text-primary font-extrabold pb-2.5' 
-              : 'border-transparent text-on-surface-variant hover:text-primary'
-          }`}
-        >
-          <Calendar className="w-4 h-4" />
-          <span>Monthly Attendance Sheet</span>
         </button>
         <button 
           onClick={() => setActiveTab('timetable')}

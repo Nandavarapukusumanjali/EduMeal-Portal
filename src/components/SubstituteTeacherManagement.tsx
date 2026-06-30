@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { User, Calendar, CheckSquare, AlertCircle, RefreshCw, Check, ArrowRight } from 'lucide-react';
 import { SubstituteAssignment, TimetableEntry, UserProfile, AuditLog } from '../types';
 import { subscribeToSubstituteAssignments, addSubstituteAssignment } from '../services/db';
+import { isTeacherMatch } from '../utils';
 
 interface SubstituteTeacherManagementProps {
   teachers: UserProfile[];
@@ -24,9 +25,17 @@ export default function SubstituteTeacherManagement({
     const da = String(d.getDate()).padStart(2, '0');
     return `${yr}-${mo}-${da}`;
   });
+  const [selectedPeriods, setSelectedPeriods] = useState<number[]>([]);
+  const [selectedSubstitute, setSelectedSubstitute] = useState<string>('');
   const [teacherTimetable, setTeacherTimetable] = useState<TimetableEntry[]>([]);
   const [substituteAssignments, setSubstituteAssignments] = useState<SubstituteAssignment[]>([]);
   const [statusMsg, setStatusMsg] = useState<{ type: 'success' | 'error' | null; text: string }>({ type: null, text: '' });
+
+  const togglePeriodSelection = (period: number) => {
+    setSelectedPeriods(prev => 
+      prev.includes(period) ? prev.filter(p => p !== period) : [...prev, period]
+    );
+  };
 
   useEffect(() => {
     const unsub = subscribeToSubstituteAssignments(setSubstituteAssignments);
@@ -53,7 +62,7 @@ export default function SubstituteTeacherManagement({
       const dayName = getDayOfWeek(selectedDate);
       // Filter entries for selected teacher on this day of the week
       const entries = timetableEntries.filter(
-        e => e.teacher_id === selectedTeacherId && e.day_of_week === dayName
+        e => isTeacherMatch(e.teacher_id, selectedTeacherId) && e.day_of_week === dayName
       );
       // Sort by period
       entries.sort((a, b) => a.period_number - b.period_number);
@@ -134,26 +143,46 @@ export default function SubstituteTeacherManagement({
   );
 
   const isTeacherFree = (teacherName: string, period: number) => {
-    if (teacherName === selectedTeacherId) return false;
+    if (isTeacherMatch(teacherName, selectedTeacherId)) return false;
     const dayName = getDayOfWeek(selectedDate);
     
+    console.log(`Checking ${teacherName} for ${dayName} P${period}`);
+    
+    // Strict comparison
+    const normalizedName = teacherName.trim().toLowerCase();
+
     // 1. Check if they have a regular class assigned in timetable
     const hasRegularClass = timetableEntries.some(
-      e => e.teacher_id === teacherName && e.day_of_week === dayName && e.period_number === period
+      e => {
+        const matchesName = e.teacher_id && e.teacher_id.trim().toLowerCase() === normalizedName;
+        const isBusy = matchesName && e.day_of_week === dayName && e.period_number === period;
+        if (isBusy) {
+            console.log(`Teacher ${teacherName} is busy regular class in period ${period}:`, e);
+        }
+        return isBusy;
+      }
     );
-    if (hasRegularClass) return false;
+    if (hasRegularClass) {
+        return false;
+    }
 
     // 2. Check if they are already substituting for another class during this period on this date
     const isAlreadySubstituting = substituteAssignments.some(
-      sub => sub.date === selectedDate && sub.period === period && sub.substitute_teacher_id === teacherName
+      sub => sub.date === selectedDate && sub.period === period && sub.substitute_teacher_id && sub.substitute_teacher_id.trim().toLowerCase() === normalizedName
     );
-    if (isAlreadySubstituting) return false;
+    if (isAlreadySubstituting) {
+        console.log(`Teacher ${teacherName} is already substituting in period ${period}`);
+        return false;
+    }
 
     // 3. Check if they are the absent teacher in any substitute assignment for this period on this date
     const isAbsentForThisPeriod = substituteAssignments.some(
-      sub => sub.date === selectedDate && sub.period === period && sub.original_teacher_id === teacherName
+      sub => sub.date === selectedDate && sub.period === period && sub.original_teacher_id && sub.original_teacher_id.trim().toLowerCase() === normalizedName
     );
-    if (isAbsentForThisPeriod) return false;
+    if (isAbsentForThisPeriod) {
+        console.log(`Teacher ${teacherName} is the absent teacher in period ${period}`);
+        return false;
+    }
 
     return true;
   };
@@ -211,51 +240,70 @@ export default function SubstituteTeacherManagement({
           </div>
 
           {teacherTimetable.length > 0 && (
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-[11px] border-collapse">
-                <thead>
-                  <tr className="border-b border-neutral-200 text-neutral-500 font-extrabold">
-                    <th className="pb-2">Period</th>
-                    <th className="pb-2">Class</th>
-                    <th className="pb-2">Subject</th>
-                    <th className="pb-2">Substitute Teacher</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-neutral-100">
-                  {teacherTimetable.map(entry => {
-                    const currentSub = activeAssignmentsForDate.find(
-                      sub => sub.original_teacher_id === selectedTeacherId && 
-                             sub.period === entry.period_number
-                    );
-
-                    return (
+            <div className="space-y-3">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-[11px] border-collapse">
+                  <thead>
+                    <tr className="border-b border-neutral-200 text-neutral-500 font-extrabold">
+                      <th className="pb-2">Select</th>
+                      <th className="pb-2">Period</th>
+                      <th className="pb-2">Class</th>
+                      <th className="pb-2">Subject</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-neutral-100">
+                    {teacherTimetable.map(entry => (
                       <tr key={entry.timetable_id} className="hover:bg-neutral-100/50">
+                        <td className="py-2.5">
+                          <input 
+                            type="checkbox" 
+                            checked={selectedPeriods.includes(entry.period_number)}
+                            onChange={() => togglePeriodSelection(entry.period_number)}
+                            className="accent-primary"
+                          />
+                        </td>
                         <td className="py-2.5 font-bold text-neutral-700">
                           P{entry.period_number}
                           <div className="text-[9px] text-neutral-400 font-normal">{getPeriodTimeLabel(entry.period_number)}</div>
                         </td>
                         <td className="py-2.5 font-bold text-primary">{entry.class}-{entry.section}</td>
                         <td className="py-2.5 text-neutral-600 font-medium">{entry.subject}</td>
-                        <td className="py-2.5">
-                          <select 
-                            value={currentSub?.substitute_teacher_id || ''}
-                            onChange={e => handleAssignSubstitute(entry.period_number, e.target.value)}
-                            className="px-2 py-1 border border-neutral-200 rounded-md text-[10px] bg-white font-bold text-neutral-800 focus:outline-primary"
-                          >
-                            <option value="">-- Assign --</option>
-                            {teachers
-                              .filter(t => isTeacherFree(t.name, entry.period_number) || (currentSub && currentSub.substitute_teacher_id === t.name))
-                              .map(t => (
-                                <option key={t.uid} value={t.name}>{t.name}</option>
-                              ))
-                            }
-                          </select>
-                        </td>
                       </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {selectedPeriods.length > 0 && (
+                <div className="pt-3 border-t border-neutral-200 space-y-2">
+                  <select 
+                    value={selectedSubstitute}
+                    onChange={e => setSelectedSubstitute(e.target.value)}
+                    className="w-full px-3 py-2 border border-outline-variant rounded-lg text-xs bg-white text-on-surface font-semibold focus:outline-primary"
+                  >
+                    <option value="">-- Select Substitute Teacher --</option>
+                    {teachers
+                      .filter(t => selectedPeriods.every(p => isTeacherFree(t.name, p)))
+                      .map(t => (
+                        <option key={t.uid} value={t.name}>{t.name}</option>
+                      ))
+                    }
+                  </select>
+                  <button
+                    onClick={async () => {
+                      for (const p of selectedPeriods) {
+                        await handleAssignSubstitute(p, selectedSubstitute);
+                      }
+                      setSelectedPeriods([]);
+                      setSelectedSubstitute('');
+                    }}
+                    disabled={!selectedSubstitute}
+                    className="w-full px-4 py-2 bg-primary text-white rounded-lg text-xs font-bold hover:bg-primary/90 disabled:bg-neutral-300"
+                  >
+                    Assign Substitute
+                  </button>
+                </div>
+              )}
             </div>
           )}
         </div>

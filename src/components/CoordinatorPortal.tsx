@@ -11,6 +11,7 @@ import {
   UserProfile, Student, ApprovalRequest, AuditLog, 
   DailyWastageReport, StudentFeedback, AttendanceReport, TimetableEntry 
 } from '../types';
+import { isTeacherMatch } from '../utils';
 import { 
   subscribeToUsers, subscribeToApprovalRequests, addApprovalRequest, 
   addAuditLog, saveUserProfile, subscribeToStudents, subscribeToWastage, 
@@ -407,7 +408,7 @@ export default function CoordinatorPortal({ onBackToWelcome, currentUser }: Coor
         daysList.forEach(day => {
           const row: any = { 'Day': day };
           periodsList.forEach(p => {
-            const entry = timetableEntries.find(e => e.day_of_week === day && e.period_number === p && e.teacher_id === t);
+            const entry = timetableEntries.find(e => e.day_of_week === day && e.period_number === p && isTeacherMatch(e.teacher_id, t));
             row[`Period ${p}`] = entry ? `${entry.subject} (${entry.class}-${entry.section})` : 'Free / Preparation';
           });
           teacherRows.push(row);
@@ -3090,7 +3091,7 @@ export default function CoordinatorPortal({ onBackToWelcome, currentUser }: Coor
                         });
                       } else if (teacherId) {
                         // Find this teacher's active slots for this day/period and set to free
-                        const matched = timetableEntries.find(e => e.day_of_week === day && e.period_number === period && e.teacher_id === teacherId);
+                        const matched = timetableEntries.find(e => e.day_of_week === day && e.period_number === period && isTeacherMatch(e.teacher_id, teacherId));
                         if (matched) {
                           await addTimetableEntry({
                             ...matched,
