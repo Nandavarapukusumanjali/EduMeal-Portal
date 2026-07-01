@@ -9,7 +9,7 @@ import {
 import * as XLSX from 'xlsx';
 import { 
   UserProfile, Student, ApprovalRequest, AuditLog, 
-  DailyWastageReport, StudentFeedback, AttendanceReport, TimetableEntry 
+  DailyWastageReport, StudentFeedback, AttendanceReport, TimetableEntry, TeacherLeave 
 } from '../types';
 import { isTeacherMatch } from '../utils';
 import { 
@@ -17,7 +17,8 @@ import {
   addAuditLog, saveUserProfile, subscribeToStudents, subscribeToWastage, 
   subscribeToFeedback, subscribeToAttendance, addStudent, updateStudent, 
   deleteStudent, updateUserProfile, subscribeToTimetableEntries,
-  addTimetableEntry, updateTimetableEntry, deleteTimetableEntry, saveTimetableEntriesBatch
+  deleteUserProfile,
+  addTimetableEntry, updateTimetableEntry, deleteTimetableEntry, saveTimetableEntriesBatch, getTeacherLeaves
 } from '../services/db';
 import { createAuthUserSecondary, getEmailForUser } from '../services/auth';
 
@@ -59,6 +60,7 @@ export default function CoordinatorPortal({ onBackToWelcome, currentUser }: Coor
   const [wastageReports, setWastageReports] = useState<DailyWastageReport[]>([]);
   const [feedbackList, setFeedbackList] = useState<StudentFeedback[]>([]);
   const [attendanceReports, setAttendanceReports] = useState<AttendanceReport[]>([]);
+  const [teacherLeaves, setTeacherLeaves] = useState<TeacherLeave[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
   const [actionStatus, setActionStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
@@ -671,6 +673,8 @@ export default function CoordinatorPortal({ onBackToWelcome, currentUser }: Coor
     const unsubAttendance = subscribeToAttendance(setAttendanceReports);
     const unsubTimetable = subscribeToTimetableEntries(setTimetableEntries);
 
+    getTeacherLeaves().then(setTeacherLeaves);
+
     return () => {
       unsubUsers();
       unsubStudents();
@@ -1052,12 +1056,14 @@ export default function CoordinatorPortal({ onBackToWelcome, currentUser }: Coor
       const newUid = await createAuthUserSecondary(sanitizedUsername + `_rst${Date.now()}`, tempResetPassword.trim(), showResetModal.role);
 
       // 3. Update Firestore doc to the new UID and set status
-      await updateUserProfile(showResetModal.uid, {
+      await saveUserProfile({
+        ...showResetModal,
         uid: newUid,
         email: resetVersionEmail,
         first_login: true,
         updated_at: new Date().toISOString()
       });
+      await deleteUserProfile(showResetModal.uid);
 
       // 4. Log the action
       await addAuditLog({
@@ -1431,6 +1437,7 @@ export default function CoordinatorPortal({ onBackToWelcome, currentUser }: Coor
           <SubstituteTeacherManagement 
             teachers={users.filter(u => u.role === 'teacher' && u.status !== 'inactive' && u.status !== 'rejected')} 
             timetableEntries={timetableEntries}
+            teacherLeaves={teacherLeaves}
             addAuditLog={addAuditLog}
             currentUser={currentUser}
           />

@@ -87,6 +87,14 @@ export interface SubstituteAssignment {
   assigned_at: string; // ISO timestamp
 }
 
+export interface TeacherLeave {
+  leave_id: string;
+  teacher_id: string;
+  date: string; // YYYY-MM-DD
+  reason: string;
+  status: 'pending' | 'approved' | 'rejected';
+}
+
 export interface Attendance {
   attendance_id: string;
   date: string; // YYYY-MM-DD

@@ -76,15 +76,18 @@ export default function AdminPortal({
     return `${yr}-${mo}-${da}`;
   });
 
-  // Proactively auto-select the latest recorded audit date if present, to ensure tables aren't blank
-  const [hasAutoSelectedLatest, setHasAutoSelectedLatest] = useState<boolean>(false);
+  // Principal Portal: Reset date to today on mount, to ensure auto-selection works on every entry
   useEffect(() => {
-    if (wastageReports.length > 0 && !hasAutoSelectedLatest) {
-      const sorted = [...wastageReports].sort((a, b) => b.date.localeCompare(a.date));
-      setSelectedDate(sorted[0].date);
-      setHasAutoSelectedLatest(true);
-    }
-  }, [wastageReports, hasAutoSelectedLatest]);
+    const d = new Date();
+    const yr = d.getFullYear();
+    const mo = String(d.getMonth() + 1).padStart(2, '0');
+    const da = String(d.getDate()).padStart(2, '0');
+    setSelectedDate(`${yr}-${mo}-${da}`);
+  }, []);
+
+  // Proactively auto-select the latest recorded audit date if present, to ensure tables aren't blank
+  // REMOVED: Auto-select latest audit date to prioritize showing today's date
+  const [hasAutoSelectedLatest, setHasAutoSelectedLatest] = useState<boolean>(true);
 
   const [selectedPredictItem, setSelectedPredictItem] = useState<string>('Rice');
   const [activeSmartTab, setActiveSmartTab] = useState<'popularity' | 'performance' | 'attendance' | 'recommendations' | 'insights'>('popularity');
@@ -548,9 +551,10 @@ export default function AdminPortal({
   const totalPresentOnSelectedDate = matchingAttendance.length > 0
     ? matchingAttendance.reduce((acc, curr) => acc + curr.totalPresent, 0)
     : 0;
+    
   const totalEnrolledOnSelectedDate = matchingAttendance.length > 0
     ? matchingAttendance.reduce((acc, curr) => acc + curr.totalStudents, 0)
-    : totalStudents; // Fallback to current students
+    : 0;
     
   const attendanceRatio = totalEnrolledOnSelectedDate > 0 
     ? parseFloat(((totalPresentOnSelectedDate / totalEnrolledOnSelectedDate) * 100).toFixed(1)) 

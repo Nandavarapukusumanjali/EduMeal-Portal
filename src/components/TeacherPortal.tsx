@@ -3,7 +3,7 @@ import { Student, AttendanceReport, UserProfile, TimetableEntry, SubstituteAssig
 import { 
   Users, CheckCircle, XCircle, Percent, Plus, Edit, Trash, 
   ArrowLeft, Save, Sparkles, Calendar, Printer, Download, RefreshCw, Check,
-  AlertTriangle, HelpCircle, LogOut, Lock, ArrowRight, CheckSquare, AlertCircle
+  AlertTriangle, HelpCircle, LogOut, Lock, ArrowRight, CheckSquare, AlertCircle, FileSpreadsheet
 } from 'lucide-react';
 import { addStudent, updateStudent, deleteStudent, subscribeToTimetableEntries, subscribeToSubstituteAssignments, addApprovalRequest, subscribeToApprovalRequests } from '../services/db';
 
@@ -114,7 +114,7 @@ export default function TeacherPortal({
   })();
 
   // Tabs and view switching
-  const [activeTab, setActiveTab] = useState<'registry' | 'timetable'>('registry');
+  const [activeTab, setActiveTab] = useState<'registry' | 'monthly' | 'timetable'>('registry');
 
 
   // Month and Year selection for Monthly Attendance Sheet view
@@ -305,7 +305,7 @@ export default function TeacherPortal({
 
   const todaySchedule = getTodaySchedule();
 
-  const [attendanceDate, setAttendanceDate] = useState<string>(todayDate);
+  const [attendanceDate, setAttendanceDate] = useState<string>(() => getLocalTodayDate());
 
   const getPeriodTimes = (pNum: number) => {
     const times = [
@@ -718,18 +718,19 @@ export default function TeacherPortal({
   const handleMarkAll = async (present: boolean) => {
     try {
       const targets = students.filter(s => s.class === selectedClass && s.section === selectedSection);
+      
+      // OPTIMIZATION: Update Firestore in one batch
       await Promise.all(targets.map(s => updateStudent(s.id, { present })));
       
-      // Update interactive tap status state and local storage
-      setTodayClickStatus(prev => {
-        const updated = { ...prev };
-        targets.forEach(s => {
-          updated[s.id] = present ? 'P' : 'A';
-        });
-        localStorage.setItem(`edumeal_click_status_${attendanceDate}`, JSON.stringify(updated));
-        return updated;
+      // Update interactive tap status state and local storage in one go
+      const updated = { ...todayClickStatus };
+      targets.forEach(s => {
+        updated[s.id] = present ? 'P' : 'A';
       });
-      // Immediately notify parent components
+      setTodayClickStatus(updated);
+      localStorage.setItem(`edumeal_click_status_${attendanceDate}`, JSON.stringify(updated));
+      
+      // Update local student list state in one go
       onUpdateStudents(students.map(s => {
         if (s.class === selectedClass && s.section === selectedSection) {
           return { ...s, present };
@@ -1517,29 +1518,40 @@ export default function TeacherPortal({
           <div className="flex border-b border-outline-variant gap-4 select-none mb-1">
             <button 
               onClick={() => setActiveTab('registry')}
-          className={`pb-3 text-sm font-bold border-b-2 transition-all flex items-center gap-2 ${
-            activeTab === 'registry' 
-              ? 'border-primary text-primary font-extrabold pb-2.5' 
-              : 'border-transparent text-on-surface-variant hover:text-primary'
-          }`}
-        >
-          <Users className="w-4 h-4" />
-          <span>Today's Daily Roll Call</span>
-        </button>
-        <button 
-          onClick={() => setActiveTab('timetable')}
-          className={`pb-3 text-sm font-bold border-b-2 transition-all flex items-center gap-2 ${
-            activeTab === 'timetable' 
-              ? 'border-primary text-primary font-extrabold pb-2.5' 
-              : 'border-transparent text-on-surface-variant hover:text-primary'
-          }`}
-        >
-          <Calendar className="w-4 h-4" />
-          <span>My Teaching Timetable</span>
-        </button>
-      </div>
+              className={`pb-3 text-sm font-bold border-b-2 transition-all flex items-center gap-2 ${
+                activeTab === 'registry' 
+                  ? 'border-primary text-primary font-extrabold pb-2.5' 
+                  : 'border-transparent text-on-surface-variant hover:text-primary'
+              }`}
+            >
+              <Users className="w-4 h-4" />
+              <span>Today's Daily Roll Call</span>
+            </button>
+            <button 
+              onClick={() => setActiveTab('monthly')}
+              className={`pb-3 text-sm font-bold border-b-2 transition-all flex items-center gap-2 ${
+                activeTab === 'monthly' 
+                  ? 'border-primary text-primary font-extrabold pb-2.5' 
+                  : 'border-transparent text-on-surface-variant hover:text-primary'
+              }`}
+            >
+              <FileSpreadsheet className="w-4 h-4" />
+              <span>Monthly Attendance Sheet</span>
+            </button>
+            <button 
+              onClick={() => setActiveTab('timetable')}
+              className={`pb-3 text-sm font-bold border-b-2 transition-all flex items-center gap-2 ${
+                activeTab === 'timetable' 
+                  ? 'border-primary text-primary font-extrabold pb-2.5' 
+                  : 'border-transparent text-on-surface-variant hover:text-primary'
+              }`}
+            >
+              <Calendar className="w-4 h-4" />
+              <span>My Teaching Timetable</span>
+            </button>
+          </div>
 
-      {activeTab === 'registry' ? (
+      {activeTab === 'registry' && (
         <>
           {/* Attendance Submission Status Banner */}
           <div className={`p-4 rounded-xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${statsColor} transition-colors`}>
@@ -1610,8 +1622,6 @@ export default function TeacherPortal({
               <span>Edit Holiday Status</span>
             </button>
           </div>
-
-
 
           {/* Bento Stats Grid */}
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
@@ -1815,29 +1825,33 @@ export default function TeacherPortal({
           </div>
 
           {/* Floating Bottom Action Drawer */}
-          <div className="bg-surface-container-lowest p-4 rounded-2xl border border-outline-variant shadow-sm flex flex-col md:flex-row items-center justify-between gap-4">
-            <div className="flex gap-2 items-center text-xs text-on-surface-variant">
-              <Sparkles className="w-4 h-4 text-tertiary" />
-              {isClosedToday ? (
-                <span>Currently Registry: <strong>{selectedClass} - {selectedSection}</strong> • School Closed Today (No Attendance Required)</span>
-              ) : (
-                <span>Currently Registry: <strong>{selectedClass} - {selectedSection}</strong> • {totalStudents} Enrolled ({presentStudents} present)</span>
-              )}
+          {!todaySubmitted && (
+            <div className="bg-surface-container-lowest p-4 rounded-2xl border border-outline-variant shadow-sm flex flex-col md:flex-row items-center justify-between gap-4">
+              <div className="flex gap-2 items-center text-xs text-on-surface-variant">
+                <Sparkles className="w-4 h-4 text-tertiary" />
+                {isClosedToday ? (
+                  <span>Currently Registry: <strong>{selectedClass} - {selectedSection}</strong> • School Closed Today (No Attendance Required)</span>
+                ) : (
+                  <span>Currently Registry: <strong>{selectedClass} - {selectedSection}</strong> • {totalStudents} Enrolled ({presentStudents} present)</span>
+                )}
+              </div>
+              <button 
+                onClick={handleSubmit}
+                disabled={isClosedToday}
+                className={`w-full md:w-auto font-extrabold text-sm py-2.5 px-8 rounded-lg shadow-sm transition-all focus:ring-2 flex items-center justify-center gap-2 ${
+                  isClosedToday 
+                    ? "bg-slate-300 text-slate-500 cursor-not-allowed"
+                    : "bg-primary hover:bg-primary-hover text-white focus:ring-primary/20 cursor-pointer"
+                }`}
+              >
+                {isClosedToday ? "School Closed" : "Submit Attendance Roll"}
+              </button>
             </div>
-            <button 
-              onClick={handleSubmit}
-              disabled={isClosedToday}
-              className={`w-full md:w-auto font-extrabold text-sm py-2.5 px-8 rounded-lg shadow-sm transition-all focus:ring-2 flex items-center justify-center gap-2 ${
-                isClosedToday 
-                  ? "bg-slate-300 text-slate-500 cursor-not-allowed"
-                  : "bg-primary hover:bg-primary-hover text-white focus:ring-primary/20 cursor-pointer"
-              }`}
-            >
-              {isClosedToday ? "School Closed" : "Submit Attendance Roll"}
-            </button>
-          </div>
+          )}
         </>
-      ) : (
+      )}
+
+      {activeTab === 'monthly' && (
         /* Monthly Attendance Sheet View */
         <div className="space-y-4">
           <div className="bg-surface-container-lowest rounded-2xl border border-outline-variant overflow-hidden shadow-xs">

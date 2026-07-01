@@ -27,7 +27,8 @@ import {
   TimetableEntry, 
   Role, 
   SubstituteAssignment, 
-  Attendance 
+  Attendance,
+  TeacherLeave
 } from '../types';
 
 // ============================================================================
@@ -1227,4 +1228,16 @@ export function subscribeToAttendanceRecords(callback: (records: Attendance[]) =
       activeAttendanceRecordsUnsub = null;
     }
   };
+}
+
+export async function getTeacherLeaves(): Promise<TeacherLeave[]> {
+  const path = 'teacher_leaves';
+  try {
+    const collRef = collection(db, path);
+    const qSnapshot = await getDocs(collRef);
+    return qSnapshot.docs.map(doc => doc.data() as TeacherLeave);
+  } catch (err) {
+    console.error("Error fetching teacher leaves:", err);
+    return [];
+  }
 }

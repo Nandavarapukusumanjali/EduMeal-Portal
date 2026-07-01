@@ -92,6 +92,11 @@ service cloud.firestore {
       allow create, update, delete: if isSignedIn() && (isAdmin() || isCoordinator());
     }
 
+    match /teacher_leaves/{leaveId} {
+      allow read, list: if true;
+      allow write: if isSignedIn() && (isCoordinator() || isAdmin()) && isValidId(leaveId);
+    }
+
     match /substitute_assignments/{assignmentId} {
       allow read: if isSignedIn();
       allow write: if isSignedIn() && (isCoordinator() || isAdmin()) && isValidId(assignmentId);
